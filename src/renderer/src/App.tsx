@@ -1,0 +1,134 @@
+import { useCallback, useEffect, useState } from 'react'
+import type { AccessMode, NewAgentInput } from '@shared/types'
+import { AgentPanel } from './components/AgentPanel'
+import { AgentRail } from './components/AgentRail'
+import { NewAgentDialog } from './components/NewAgentDialog'
+import { SettingsDialog } from './components/SettingsDialog'
+import { Sky } from './components/Sky'
+import { TitleBar } from './components/TitleBar'
+import { useMurmur } from './useMurmur'
+
+export function App() {
+  const { state, api, run, showError, chooseProject, updateSettings } = useMurmur()
+  const { project, agents, approvals, settings, nowPlaying, update, error } = state
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [dialog, setDialog] = useState<'new' | 'settings' | null>(null)
+
+  // Keep a sensible selection as agents come and go.
+  useEffect(() => {
+    if (selectedId && agents.some((a) => a.id === selectedId)) return
+    setSelectedId(agents[0]?.id ?? null)
+  }, [agents, selectedId])
+
+  // Errors fade on their own after a while.
+  useEffect(() => {
+    if (!error) return
+    const t = setTimeout(() => showError(null), 9000)
+    return () => clearTimeout(t)
+  }, [error, showError])
+
+  const selected = agents.find((a) => a.id === selectedId) ?? null
+  const anyRunning = agents.some((a) => a.status === 'working' || a.status === 'waiting' || a.status === 'starting')
+
+  const create = useCallback(
+    async (input: NewAgentInput): Promise<boolean> => {
+      const agent = await run(api.agents.create(input))
+      if (agent) setSelectedId(agent.id)
+      return Boolean(agent)
+    },
+    [api, run]
+  )
+
+  const openNew = (): void => {
+    if (!project) void chooseProject()
+    else setDialog('new')
+  }
+
+  return (
+    <div className="app">
+      <TitleBar
+        api={api}
+        project={project}
+        nowPlaying={nowPlaying}
+        anyRunning={anyRunning}
+        onChooseProject={() => void chooseProject()}
+        onPauseAll={() => void run(api.agents.pauseAll())}
+        onOpenSettings={() => setDialog('settings')}
+      />
+
+      {project ? (
+        <div className="body">
+          <AgentRail agents={agents} selectedId={selectedId} onSelect={setSelectedId} onNew={openNew} />
+          <Sky
+            agents={agents}
+            approvals={approvals}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            onAnswer={(id, allow) => void run(api.agents.answer(id, allow))}
+            onNew={openNew}
+          />
+          {selected ? (
+            <AgentPanel
+              agent={selected}
+              allowBypass={settings?.allowBypass ?? false}
+              onSend={(text) => void run(api.agents.send(selected.id, text))}
+              onPause={() => void run(api.agents.pause(selected.id))}
+              onResume={() => void run(api.agents.resume(selected.id))}
+              onSetMode={(mode: AccessMode) => void run(api.agents.setMode(selected.id, mode))}
+              onMerge={() => void run(api.agents.merge(selected.id))}
+              onDiscard={() => void run(api.agents.discard(selected.id))}
+              onOpenTerminal={() => void run(api.agents.openTerminal(selected.id))}
+            />
+          ) : (
+            <div style={{ width: 330, flexShrink: 0 }} />
+          )}
+        </div>
+      ) : (
+        <div className="welcome">
+          <h1>Open a project to start</h1>
+          <p>
+            Pick a folder that’s a git repository. Every agent you start gets its own copy of it on its own branch, and you
+            merge their work back when you’re happy with it.
+          </p>
+          <button className="btn primary" onClick={() => void chooseProject()}>
+            Open a project
+          </button>
+        </div>
+      )}
+
+      {dialog === 'new' && settings && project ? (
+        <NewAgentDialog
+          settings={settings}
+          projectName={project.name}
+          onCreate={create}
+          onHideCaution={() => void updateSettings({ hideAutoCaution: true })}
+          onClose={() => setDialog(null)}
+        />
+      ) : null}
+      {dialog === 'settings' && settings ? (
+        <SettingsDialog settings={settings} onSave={(patch) => void updateSettings(patch)} onClose={() => setDialog(null)} />
+      ) : null}
+
+      <div className="toasts" aria-live="polite">
+        {error ? (
+          <div className="toast error" role="alert">
+            <p>{error}</p>
+            <button className="icon-btn" aria-label="Dismiss" onClick={() => showError(null)}>
+              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                <path d="M0 0l10 10M10 0L0 10" stroke="currentColor" />
+              </svg>
+            </button>
+          </div>
+        ) : null}
+        {update.kind === 'ready' ? (
+          <div className="toast">
+            <p>Murmur {update.version} is ready.</p>
+            <button className="btn primary" onClick={api.updates.restartToUpdate}>
+              Restart to update
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}

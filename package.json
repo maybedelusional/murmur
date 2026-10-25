@@ -1,0 +1,42 @@
+{
+  "name": "murmur",
+  "productName": "Murmur",
+  "version": "0.1.0",
+  "description": "Run many Claude agents together on one canvas.",
+  "author": "maybedelusional",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "./out/main/index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/maybedelusional/murmur.git"
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "npm run typecheck && electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "dist": "npm run build && electron-builder --win --publish never",
+    "release": "npm run build && electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.310",
+    "electron-updater": "^6.8.11",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/schibsted-grotesk": "^5.3.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "^6.0.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "~6.0.3",
+    "vite": "^8.3.5"
+  }
+}

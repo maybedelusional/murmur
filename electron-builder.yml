@@ -1,0 +1,32 @@
+appId: com.maybedelusional.murmur
+productName: Murmur
+copyright: Copyright © 2026 maybedelusional
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+  - package.json
+  - "!**/*.map"
+# The Claude Code binary ships inside the Agent SDK's platform package.
+# Executables can't run from inside the asar archive, so keep it on disk.
+asarUnpack:
+  - node_modules/@anthropic-ai/claude-agent-sdk*/**
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.png
+  executableName: Murmur
+nsis:
+  oneClick: true
+  perMachine: false
+  createDesktopShortcut: true
+  shortcutName: Murmur
+  artifactName: Murmur-Setup-${version}.${ext}
+  differentialPackage: true
+publish:
+  provider: github
+  owner: maybedelusional
+  repo: murmur
+  releaseType: release
