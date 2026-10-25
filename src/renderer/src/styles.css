@@ -1394,3 +1394,555 @@ fieldset.field {
     grid-template-columns: 200px minmax(0, 1fr) 300px;
   }
 }
+
+/* ---------- shared bits for the new screens ---------- */
+
+.dialog-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.segmented {
+  display: flex;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--ink-2);
+  border: 1px solid var(--ink-3);
+}
+
+.segmented button {
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.segmented button[aria-selected='true'] {
+  background: var(--ink-3);
+  color: var(--text);
+}
+
+.link-btn {
+  align-self: flex-start;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 13.5px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.mode-option .members {
+  color: var(--faint);
+}
+
+.budget-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+}
+
+.budget-input .input {
+  flex: 1;
+}
+
+.input[aria-invalid='true'] {
+  border-color: var(--danger-border);
+}
+
+.dialog.wide {
+  width: 960px;
+}
+
+/* ---------- agent panel: team, spending ---------- */
+
+.team-line {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--accent-text);
+}
+
+.spent {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  white-space: normal !important;
+}
+
+.spent .link-btn {
+  font-size: 12.5px;
+}
+
+.budget-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.budget-edit .input {
+  width: 72px;
+  height: 28px;
+  padding: 0 8px;
+}
+
+.budget-edit .btn {
+  height: 28px;
+  padding: 0 10px;
+}
+
+.meter {
+  height: 4px;
+  margin-top: -12px;
+  border-radius: 999px;
+  background: var(--ink-3);
+  overflow: hidden;
+}
+
+.meter span {
+  display: block;
+  height: 100%;
+  background: var(--muted);
+  border-radius: inherit;
+}
+
+.meter span.high {
+  background: var(--accent);
+}
+
+.rail-total {
+  margin: auto 10px 0;
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.rail-total span {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- sky backgrounds ---------- */
+
+.sky-media {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sky-dim {
+  position: absolute;
+  inset: 0;
+}
+
+/* ---------- review ---------- */
+
+.review-head {
+  align-items: flex-start;
+  padding-bottom: 14px;
+}
+
+.review-head h1 {
+  margin-bottom: 4px;
+}
+
+.review-head p {
+  margin: 0;
+  font-size: 13.5px;
+}
+
+.review-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.review-actions .btn {
+  margin: 0;
+}
+
+.review {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+}
+
+.review-files {
+  overflow: auto;
+  padding: 12px 8px 12px 16px;
+  border-right: 1px solid var(--ink-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.review-file {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+}
+
+.review-file:hover {
+  background: var(--ink-2);
+}
+
+.review-file.selected {
+  background: var(--ink-3);
+}
+
+.review-file-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.review-file-meta {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.review-diff {
+  overflow: auto;
+}
+
+.diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.diff-table .c-num {
+  width: 52px;
+}
+
+.diff-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 8px 12px;
+  background: var(--ink);
+  border-bottom: 1px solid var(--ink-3);
+  color: var(--muted);
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.d-hunk td {
+  padding: 6px 12px;
+  background: var(--ink-2);
+  color: var(--faint);
+}
+
+.d-num {
+  padding: 0;
+  text-align: right;
+  vertical-align: top;
+  color: var(--faint);
+  user-select: none;
+}
+
+.d-num-btn {
+  width: 100%;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: right;
+}
+
+.d-num-btn:hover {
+  background: var(--ink-3);
+  color: var(--accent);
+}
+
+.d-code {
+  padding: 0 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+  border-right: 1px solid var(--ink-3);
+}
+
+.d-code.del {
+  background: color-mix(in srgb, var(--danger) 13%, transparent);
+}
+
+.d-code.add {
+  background: color-mix(in srgb, #7fd1a4 13%, transparent);
+}
+
+.d-code.none {
+  background: repeating-linear-gradient(135deg, transparent 0 6px, var(--ink-2) 6px 7px);
+}
+
+.d-comment td {
+  padding: 6px 12px 10px 64px;
+}
+
+.comment {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 720px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--accent-border);
+  background: var(--ink-2);
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif;
+  font-size: 13.5px;
+}
+
+.comment p {
+  flex: 1;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.comment.editing {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.comment .row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ---------- recipes ---------- */
+
+.recipes {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 0;
+  min-height: 0;
+}
+
+.recipes .skills-list {
+  padding: 0 16px 0 0;
+}
+
+.recipe-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-left: 20px;
+}
+
+.member {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--ink-3);
+  border-radius: 8px;
+}
+
+.member-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.member-row .input {
+  flex: 1;
+  height: 30px;
+}
+
+/* ---------- theme editor drawer ---------- */
+
+.drawer {
+  position: fixed;
+  top: 46px;
+  right: 0;
+  bottom: 0;
+  width: 380px;
+  z-index: 18;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 22px 18px;
+  overflow: auto;
+  background: var(--ink);
+  border-left: 1px solid var(--ink-3);
+  box-shadow: -20px 0 60px rgba(0, 0, 0, 0.3);
+  animation: slide-in 0.18s ease-out;
+  user-select: text;
+}
+
+@keyframes slide-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+
+.drawer h1 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+}
+
+.swatches {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.swatch {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 92px;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+}
+
+.swatch input[type='color'] {
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.swatch .hex {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--ink-2);
+  font-size: 12.5px;
+}
+
+.bg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+}
+
+.bg-row > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.range {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13.5px;
+}
+
+.range input {
+  accent-color: var(--accent);
+}
+
+.drawer-actions {
+  margin-top: auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ---------- theme list in settings ---------- */
+
+.theme-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.theme-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.theme-pick {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+}
+
+.theme-pick:hover {
+  background: var(--ink-2);
+}
+
+.theme-pick[aria-checked='true'] {
+  border-color: var(--text);
+  background: var(--ink-2);
+}
+
+.theme-swatch {
+  display: grid;
+  grid-template-rows: 1fr 1fr 1fr 1fr;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+
+.theme-name {
+  display: flex;
+  flex-direction: column;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.theme-name .small {
+  font-weight: 400;
+}
+
+.recipes .filter-item {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+
+.member .textarea {
+  resize: vertical;
+}
+
+.panel {
+  overflow-x: hidden;
+}

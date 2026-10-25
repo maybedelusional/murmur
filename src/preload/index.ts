@@ -1,6 +1,15 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { IPC } from '@shared/ipc'
-import type { AgentMessageEvent, AgentSnapshot, ApprovalRequest, MurmurApi, NowPlaying, PluginsState, UpdateState } from '@shared/types'
+import type {
+  AgentMessageEvent,
+  AgentSnapshot,
+  ApprovalRequest,
+  MurmurApi,
+  NowPlaying,
+  PluginsState,
+  ThemeInfo,
+  UpdateState
+} from '@shared/types'
 
 function listen<T extends unknown[]>(channel: string, cb: (...args: T) => void): () => void {
   const fn = (_e: IpcRendererEvent, ...args: unknown[]): void => cb(...(args as T))
@@ -32,7 +41,24 @@ const api: MurmurApi = {
     openTerminal: (id) => ipcRenderer.invoke(IPC.agentsOpenTerminal, id),
     answer: (approvalId, allow) => ipcRenderer.invoke(IPC.agentsAnswer, approvalId, allow),
     onUpdate: (cb) => listen<[AgentSnapshot[], ApprovalRequest[]]>(IPC.agentsUpdated, cb),
-    onMessage: (cb) => listen<[AgentMessageEvent]>(IPC.agentsMessage, cb)
+    onMessage: (cb) => listen<[AgentMessageEvent]>(IPC.agentsMessage, cb),
+    onFocus: (cb) => listen<[string]>(IPC.agentsFocus, cb),
+    setBudget: (id, budget) => ipcRenderer.invoke(IPC.agentsSetBudget, id, budget),
+    diff: (id) => ipcRenderer.invoke(IPC.agentsDiff, id),
+    startTeam: (input) => ipcRenderer.invoke(IPC.agentsStartTeam, input)
+  },
+  recipes: {
+    list: () => ipcRenderer.invoke(IPC.recipesList),
+    save: (recipe) => ipcRenderer.invoke(IPC.recipesSave, recipe),
+    remove: (id) => ipcRenderer.invoke(IPC.recipesRemove, id)
+  },
+  themes: {
+    list: () => ipcRenderer.invoke(IPC.themesList),
+    use: (id) => ipcRenderer.invoke(IPC.themesUse, id),
+    save: (draft) => ipcRenderer.invoke(IPC.themesSave, draft),
+    remove: (id) => ipcRenderer.invoke(IPC.themesRemove, id),
+    chooseBackground: () => ipcRenderer.invoke(IPC.themesChooseBackground),
+    onChange: (cb) => listen<[ThemeInfo[], ThemeInfo]>(IPC.themesChanged, cb)
   },
   plugins: {
     state: () => ipcRenderer.invoke(IPC.pluginsState),

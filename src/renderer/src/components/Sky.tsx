@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentMessageEvent, AgentSnapshot, ApprovalRequest } from '@shared/types'
+import type { AgentMessageEvent, AgentSnapshot, ApprovalRequest, ThemeInfo } from '@shared/types'
 import { Flock, Messenger, homeSlots } from '../flock'
 
 interface Props {
@@ -10,11 +10,12 @@ interface Props {
   onAnswer(approvalId: string, allow: boolean): void
   onNew(): void
   subscribeMessages(cb: (m: AgentMessageEvent) => void): () => void
+  theme: ThemeInfo | null
 }
 
 const BIRDS: Record<string, number> = { planner: 26, builder: 42, reviewer: 22, tester: 32, custom: 32 }
 
-export function Sky({ agents, approvals, selectedId, onSelect, onAnswer, onNew, subscribeMessages }: Props) {
+export function Sky({ agents, approvals, selectedId, onSelect, onAnswer, onNew, subscribeMessages, theme }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const flocks = useRef(new Map<string, Flock>())
@@ -30,6 +31,18 @@ export function Sky({ agents, approvals, selectedId, onSelect, onAnswer, onNew, 
     [subscribeMessages]
   )
   const [size, setSize] = useState({ w: 0, h: 0 })
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const bands = theme?.bands ?? true
+  const bg = theme?.background
+  const birdColor = theme?.tokens.bird ?? '#1A1622'
+
+  // Reactive video: the background speeds up as more agents get busy.
+  const busy = agents.length ? agents.filter((a) => a.status === 'working' || a.status === 'starting').length / agents.length : 0
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v || !bg?.reactive) return
+    v.playbackRate = 0.6 + busy * 0.9
+  }, [busy, bg?.reactive, bg?.url])
 
   // Keep one flock per agent, placed in its own patch of sky.
   const slots = homeSlots(agents.length)
@@ -68,7 +81,9 @@ export function Sky({ agents, approvals, selectedId, onSelect, onAnswer, onNew, 
     canvas.width = Math.round(size.w * dpr)
     canvas.height = Math.round(size.h * dpr)
     const ctx = canvas.getContext('2d')!
-    const bird = getComputedStyle(document.documentElement).getPropertyValue('--bird').trim() || '#1A1622'
+    // Read the bird colour from the page so the theme editor's live preview shows on the flocks too.
+    let bird = birdColor
+    let frames = 0
     const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
     let raf = 0
@@ -78,6 +93,7 @@ export function Sky({ agents, approvals, selectedId, onSelect, onAnswer, onNew, 
       last = now
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, size.w, size.h)
+      if (frames++ % 30 === 0) bird = getComputedStyle(document.documentElement).getPropertyValue('--bird').trim() || birdColor
       ctx.fillStyle = bird
       for (const [id, f] of flocks.current) {
         if (!still) f.step(dt)
@@ -120,21 +136,35 @@ export function Sky({ agents, approvals, selectedId, onSelect, onAnswer, onNew, 
       cancelAnimationFrame(raf)
       document.removeEventListener('visibilitychange', onVis)
     }
-  }, [size.w, size.h, agents.length])
+  }, [size.w, size.h, agents.length, birdColor])
 
   const nameOf = (id: string): string => agents.find((a) => a.id === id)?.name ?? 'An agent'
 
   return (
     <main className="sky" ref={wrapRef}>
-      <div className="sky-band-high" aria-hidden="true" />
-      <div className="sky-band-low" aria-hidden="true" />
-      <svg className="sky-horizon" viewBox="0 0 1000 150" preserveAspectRatio="none" aria-hidden="true">
-        <path d="M0 40 C 180 28, 320 52, 520 38 S 840 22, 1000 36 L1000 150 L0 150 Z" fill="var(--horizon)" />
-        <path
-          d="M0 112 L60 104 L120 110 L190 96 L250 106 L330 100 L400 108 L470 94 L560 104 L620 98 L700 108 L780 100 L860 106 L930 96 L1000 104 L1000 150 L0 150 Z"
-          fill="var(--treeline)"
-        />
-      </svg>
+      {bg ? (
+        <>
+          {bg.kind === 'video' ? (
+            <video ref={videoRef} className="sky-media" src={bg.url} autoPlay loop muted playsInline aria-hidden="true" />
+          ) : (
+            <img className="sky-media" src={bg.url} alt="" />
+          )}
+          <div className="sky-dim" style={{ background: `rgba(0, 0, 0, ${bg.dim})` }} aria-hidden="true" />
+        </>
+      ) : null}
+      {bands ? (
+        <>
+          <div className="sky-band-high" aria-hidden="true" />
+          <div className="sky-band-low" aria-hidden="true" />
+          <svg className="sky-horizon" viewBox="0 0 1000 150" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M0 40 C 180 28, 320 52, 520 38 S 840 22, 1000 36 L1000 150 L0 150 Z" fill="var(--horizon)" />
+            <path
+              d="M0 112 L60 104 L120 110 L190 96 L250 106 L330 100 L400 108 L470 94 L560 104 L620 98 L700 108 L780 100 L860 106 L930 96 L1000 104 L1000 150 L0 150 Z"
+              fill="var(--treeline)"
+            />
+          </svg>
+        </>
+      ) : null}
       <canvas ref={canvasRef} aria-hidden="true" />
 
       {agents.map((a, i) => {
@@ -208,7 +238,7 @@ function skyStatus(a: AgentSnapshot): string {
     case 'idle':
       return 'Done'
     case 'paused':
-      return 'Paused'
+      return a.overBudget ? 'Hit its spending limit' : 'Paused'
     case 'error':
       return 'Stopped'
     case 'merged':

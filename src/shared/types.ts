@@ -43,6 +43,8 @@ export interface PluginContents {
   /** Hooks and MCP servers run code on this computer. */
   hooks: boolean
   mcpServers: string[]
+  /** Murmur themes packaged in the plugin (themes/<name>/theme.json). */
+  themes?: string[]
 }
 
 export interface MarketplacePlugin {
@@ -133,9 +135,21 @@ export interface AgentSnapshot {
   files: FileChange[]
   linesAdded: number
   linesRemoved: number
+  /** Estimated spend so far (an estimate, not a bill). */
   costUsd: number
+  /** The agent pauses itself when it reaches this. */
+  budgetUsd?: number
+  /** Set when the agent stopped because it hit its budget. */
+  overBudget?: boolean
   error?: string
   createdAt: number
+  /** Agents started together from a team recipe share a team. */
+  teamId?: string
+  teamName?: string
+  /** This agent may start new agents (with the person's approval). */
+  canStartAgents?: boolean
+  /** Name of the agent that started this one, if any. */
+  startedBy?: string
 }
 
 export interface NewAgentInput {
@@ -143,6 +157,94 @@ export interface NewAgentInput {
   role: Role
   task: string
   mode: AccessMode
+  budgetUsd?: number
+}
+
+// ---------- team recipes ----------
+
+export interface RecipeMember {
+  role: Role
+  name?: string
+  mode: AccessMode
+  /** What this member does in the team, added to the shared task. */
+  brief: string
+  /** Lets this member start more agents, each one approved by you. */
+  canStartAgents?: boolean
+}
+
+export interface Recipe {
+  id: string
+  name: string
+  description: string
+  members: RecipeMember[]
+  builtin?: boolean
+}
+
+export interface StartTeamInput {
+  recipeId: string
+  task: string
+  budgetUsd?: number
+}
+
+// ---------- review ----------
+
+export interface DiffLine {
+  kind: 'context' | 'add' | 'del'
+  oldNo?: number
+  newNo?: number
+  text: string
+}
+
+export interface DiffHunk {
+  header: string
+  lines: DiffLine[]
+}
+
+export interface FileDiff {
+  file: string
+  oldFile?: string
+  status: 'added' | 'modified' | 'deleted' | 'renamed'
+  binary: boolean
+  /** Very large files are summarised instead of shown in full. */
+  tooLarge: boolean
+  added: number
+  removed: number
+  hunks: DiffHunk[]
+}
+
+// ---------- themes ----------
+
+export interface ThemeBackground {
+  kind: 'image' | 'video'
+  /** URL the UI can load (murmur-media://...). */
+  url: string
+  /** How much to darken it behind text, 0–0.8. */
+  dim: number
+  /** Video plays faster while agents are busy. */
+  reactive: boolean
+}
+
+export interface ThemeInfo {
+  id: string
+  name: string
+  /** Where it comes from: built in, one of your own, or a plugin. */
+  source: 'builtin' | 'mine' | 'plugin'
+  pluginName?: string
+  tokens: Record<string, string>
+  /** Flat sky bands and horizon (the Dusk look). Off when a background replaces them. */
+  bands: boolean
+  background?: ThemeBackground
+}
+
+export interface ThemeDraft {
+  id?: string
+  name: string
+  tokens: Record<string, string>
+  bands: boolean
+  /** A new file to copy in, or keep the current one. */
+  backgroundFile?: string | null
+  dim: number
+  reactive: boolean
 }
 
 export interface ProjectInfo {
@@ -160,6 +262,11 @@ export interface Settings {
   hideAutoCaution: boolean
   lastProject?: string
   theme: string
+  /** Budget new agents get unless you set one; 0 means no limit. */
+  defaultBudgetUsd: number
+  notifyApprovals: boolean
+  notifyFinished: boolean
+  notifyErrors: boolean
 }
 
 export interface NowPlaying {
@@ -203,6 +310,24 @@ export interface MurmurApi {
     answer(approvalId: string, allow: boolean): Promise<Result>
     onUpdate(cb: (agents: AgentSnapshot[], approvals: ApprovalRequest[]) => void): () => void
     onMessage(cb: (m: AgentMessageEvent) => void): () => void
+    /** A notification was clicked: show that agent. */
+    onFocus(cb: (id: string) => void): () => void
+    setBudget(id: string, budgetUsd: number | null): Promise<Result>
+    diff(id: string): Promise<Result<FileDiff[]>>
+    startTeam(input: StartTeamInput): Promise<Result<AgentSnapshot[]>>
+  }
+  recipes: {
+    list(): Promise<Recipe[]>
+    save(recipe: Recipe): Promise<Result<Recipe>>
+    remove(id: string): Promise<Result>
+  }
+  themes: {
+    list(): Promise<ThemeInfo[]>
+    use(id: string): Promise<Result<ThemeInfo>>
+    save(draft: ThemeDraft): Promise<Result<ThemeInfo>>
+    remove(id: string): Promise<Result>
+    chooseBackground(): Promise<string | null>
+    onChange(cb: (themes: ThemeInfo[], current: ThemeInfo) => void): () => void
   }
   plugins: {
     state(): Promise<PluginsState>

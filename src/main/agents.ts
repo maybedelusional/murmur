@@ -20,11 +20,13 @@ import type {
   AgentMessageEvent,
   AgentSnapshot,
   ApprovalRequest,
+  FileDiff,
   NewAgentInput,
+  Recipe,
   Role
 } from '@shared/types'
 import { IPC } from '@shared/ipc'
-import { addWorktree, changedFiles, commitAll, inspectRepo, mergeBranch, removeWorktree, type RepoInfo } from './git'
+import { addWorktree, changedFiles, commitAll, fullDiff, inspectRepo, mergeBranch, removeWorktree, type RepoInfo } from './git'
 import { makeGuard } from './guard'
 import { getSettings } from './settings'
 
@@ -119,7 +121,18 @@ interface Agent {
   mailbox: Array<{ text: string; origin: SDKMessageOrigin }>
   /** When this agent sent messages recently, for the rate limit. */
   sent: number[]
+  /** Cost before the current session started (SDK totals are per session). */
+  costBase: number
+  costMode: 'unknown' | 'absolute' | 'additive'
+  /** Mode for agents this one starts (team recipes). */
+  spawnMode?: AccessMode
 }
+
+/** Things worth a Windows notification. */
+export type AgentNotice = 'approval' | 'finished' | 'error' | 'budget'
+
+/** A team can't grow past this, however many agents a planner asks for. */
+const MAX_TEAM = 8
 
 /** An agent can send at most this many messages per window, so two agents can't chat forever. */
 const MESSAGE_LIMIT = 12
@@ -162,6 +175,8 @@ export class AgentManager {
   private emitTimer: NodeJS.Timeout | null = null
   private saveTimer: NodeJS.Timeout | null = null
   private pluginSource: () => SdkPluginConfig[] = () => []
+  private noticeListener: (kind: AgentNotice, agent: AgentSnapshot, text: string) => void = () => undefined
+  private changeListener: (agents: AgentSnapshot[], approvals: ApprovalRequest[]) => void = () => undefined
 
   constructor() {
     this.load()
@@ -170,6 +185,24 @@ export class AgentManager {
   /** Where agents get their installed plugins and skills from. */
   usePlugins(source: () => SdkPluginConfig[]): void {
     this.pluginSource = source
+  }
+
+  /** Called for events the person should hear about even when Murmur is in the background. */
+  onNotice(fn: (kind: AgentNotice, agent: AgentSnapshot, text: string) => void): void {
+    this.noticeListener = fn
+  }
+
+  /** Called whenever agents change (after throttling), e.g. to update the taskbar. */
+  onChange(fn: (agents: AgentSnapshot[], approvals: ApprovalRequest[]) => void): void {
+    this.changeListener = fn
+  }
+
+  private notice(kind: AgentNotice, agent: Agent, text: string): void {
+    try {
+      this.noticeListener(kind, agent.snap, text)
+    } catch {
+      /* notifications are best effort */
+    }
   }
 
   attach(web: WebContents): void {
@@ -202,7 +235,10 @@ export class AgentManager {
 
   // ---------- lifecycle ----------
 
-  async create(input: NewAgentInput): Promise<AgentSnapshot> {
+  async create(
+    input: NewAgentInput,
+    team?: { id: string; name: string; canStartAgents?: boolean; spawnMode?: AccessMode; startedBy?: string }
+  ): Promise<AgentSnapshot> {
     if (!this.repo) throw new Error('Open a project first.')
     if (!input.task.trim()) throw new Error('Tell the agent what to do.')
     const settings = getSettings()
@@ -236,13 +272,55 @@ export class AgentManager {
       linesAdded: 0,
       linesRemoved: 0,
       costUsd: 0,
-      createdAt: Date.now()
+      budgetUsd: input.budgetUsd ?? (settings.defaultBudgetUsd > 0 ? settings.defaultBudgetUsd : undefined),
+      createdAt: Date.now(),
+      teamId: team?.id,
+      teamName: team?.name,
+      canStartAgents: team?.canStartAgents,
+      startedBy: team?.startedBy
     }
-    const agent: Agent = { snap, repo: this.repo.root, base, mailbox: [], sent: [] }
+    const agent: Agent = {
+      snap,
+      repo: this.repo.root,
+      base,
+      mailbox: [],
+      sent: [],
+      costBase: 0,
+      costMode: 'unknown',
+      spawnMode: team?.spawnMode
+    }
     this.agents.set(snap.id, agent)
     this.log(agent, 'system', `Created its own folder on branch ${branch}`)
+    if (team?.startedBy) this.log(agent, 'system', `Started by ${team.startedBy}`)
     this.start(agent, snap.task)
     return snap
+  }
+
+  /** Starts every member of a team recipe on the same task. */
+  async startTeam(recipe: Recipe, task: string, budgetUsd?: number): Promise<AgentSnapshot[]> {
+    if (!task.trim()) throw new Error('Tell the team what to do.')
+    const settings = getSettings()
+    if (recipe.members.some((m) => m.mode === 'bypass') && !settings.allowBypass) {
+      throw new Error('This recipe uses "Skip all checks", which is turned off. Turn it on in Settings, under Advanced.')
+    }
+    const teamId = randomUUID()
+    const roster = recipe.members.map((m) => m.name || ROLE_NAMES[m.role]).join(', ')
+    const started: AgentSnapshot[] = []
+    for (const m of recipe.members) {
+      const brief = [
+        `You are part of a team started from the "${recipe.name}" recipe. The team: ${roster}. Use list_agents for their exact names and branches.`,
+        `Your part: ${m.brief}`,
+        '',
+        `The team's task:\n${task.trim()}`
+      ].join('\n')
+      started.push(
+        await this.create(
+          { role: m.role, name: m.name, task: brief, mode: m.mode, budgetUsd },
+          { id: teamId, name: recipe.name, canStartAgents: m.canStartAgents, spawnMode: 'edits' }
+        )
+      )
+    }
+    return started
   }
 
   private nextName(role: Role): string {
@@ -310,9 +388,53 @@ export class AgentManager {
             const text = this.deliver(agent, to, message)
             return { content: [{ type: 'text' as const, text }] }
           }
-        )
+        ),
+        ...(agent.snap.canStartAgents ? [this.startAgentTool(sdk, agent)] : [])
       ]
     })
+  }
+
+  /** Lets a planner start builders for each piece of the work. The person approves each one. */
+  private startAgentTool(sdk: typeof import('@anthropic-ai/claude-agent-sdk'), agent: Agent) {
+    return sdk.tool(
+      'start_agent',
+      'Start a new agent on this project with its own folder and branch, to work on one piece of the plan in parallel. The person is asked to approve each new agent. Give it a precise, self-contained task that names the files it owns.',
+      {
+        role: z.enum(['builder', 'tester', 'reviewer', 'custom']).describe('What kind of agent'),
+        name: z.string().max(40).optional().describe('Optional short name, e.g. "Builder API"'),
+        task: z.string().min(10).max(6000).describe('Everything the new agent needs to know to do its piece')
+      },
+      async ({ role, name, task }) => {
+        const text = async (t: string) => ({ content: [{ type: 'text' as const, text: t }] })
+        const teamId = agent.snap.teamId ?? agent.snap.id
+        const teamSize = [...this.agents.values()].filter((o) => (o.snap.teamId ?? o.snap.id) === teamId && o.snap.status !== 'merged').length
+        if (teamSize >= MAX_TEAM) return text(`Not started: the team already has ${teamSize} agents, the most Murmur allows. Reuse an existing agent.`)
+        const label = name?.trim() || `a ${role}`
+        const answer = await this.requestApproval(agent, {
+          id: randomUUID(),
+          agentId: agent.snap.id,
+          title: `${agent.snap.name} wants to start ${label}`,
+          detail: task.split('\n')[0].slice(0, 200),
+          toolName: 'start_agent',
+          at: Date.now()
+        })
+        if (answer.behavior === 'deny') return text('The person said no to starting this agent. Do the work another way or ask them.')
+        try {
+          if (!agent.snap.teamId) {
+            agent.snap.teamId = teamId
+            agent.snap.teamName = `${agent.snap.name}'s team`
+          }
+          const started = await this.create(
+            { role, name: name?.trim() || undefined, task, mode: agent.spawnMode ?? 'edits', budgetUsd: agent.snap.budgetUsd },
+            { id: teamId, name: agent.snap.teamName ?? 'Team', startedBy: agent.snap.name, spawnMode: agent.spawnMode }
+          )
+          this.log(agent, 'system', `Started ${started.name}`)
+          return text(`Started ${started.name} on branch ${started.branch}. It will work in parallel; message it with send_message.`)
+        } catch (e) {
+          return text(`Couldn't start the agent: ${e instanceof Error ? e.message : String(e)}`)
+        }
+      }
+    )
   }
 
   /** Delivers a message from one agent to another. Returns what the sender is told. */
@@ -364,6 +486,9 @@ export class AgentManager {
 
   private async run(agent: Agent, inbox: Inbox, abort: AbortController): Promise<void> {
     const a = agent.snap
+    agent.costBase = a.costUsd
+    agent.costMode = 'unknown'
+    const remaining = a.budgetUsd !== undefined ? Math.max(0.01, a.budgetUsd - a.costUsd) : undefined
     try {
       const sdk = await loadSdk()
       const canUseTool: CanUseTool = (toolName, input, opts) => this.ask(agent, toolName, input, opts)
@@ -378,24 +503,27 @@ export class AgentManager {
           systemPrompt: { type: 'preset', preset: 'claude_code', append: rolePrompt(a) },
           mcpServers: { murmur: this.murmurTools(sdk, agent) },
           // Murmur's own messaging tools never need approval.
-          allowedTools: ['mcp__murmur__list_agents', 'mcp__murmur__send_message'],
+          // start_agent is listed too because Murmur asks you about every new agent itself.
+          allowedTools: ['mcp__murmur__list_agents', 'mcp__murmur__send_message', 'mcp__murmur__start_agent'],
           plugins: this.pluginSource(),
           pathToClaudeCodeExecutable: claudeBinary(),
           abortController: abort,
           resume: agent.sessionId,
+          maxBudgetUsd: remaining,
           stderr: (d) => console.error(`[${a.name}]`, d.trimEnd())
         }
       })
       agent.q = q
       this.setStatus(agent, 'working', 'Thinking')
       for await (const msg of q) this.handle(agent, msg)
-      if (agent.snap.status !== 'merged') this.setStatus(agent, 'paused', 'Session ended')
+      if (agent.snap.status !== 'merged' && !agent.snap.overBudget) this.setStatus(agent, 'paused', 'Session ended')
     } catch (e) {
       if (abort.signal.aborted) return
       const message = e instanceof Error ? e.message : String(e)
       agent.snap.error = message
       this.log(agent, 'error', message)
       this.setStatus(agent, 'error', friendlyError(message))
+      this.notice('error', agent, friendlyError(message))
     } finally {
       if (agent.inbox === inbox) {
         agent.q = undefined
@@ -427,15 +555,20 @@ export class AgentManager {
         this.scheduleDiff(agent)
         break
       case 'result': {
-        agent.snap.costUsd += 'total_cost_usd' in msg ? (msg.total_cost_usd ?? 0) : 0
+        this.updateCost(agent, msg.total_cost_usd ?? 0)
         this.scheduleDiff(agent, 0)
-        if (agent.pausing) {
+        const budget = agent.snap.budgetUsd
+        if (msg.subtype === 'error_max_budget_usd' || (budget !== undefined && agent.snap.costUsd >= budget)) {
+          this.stopForBudget(agent)
+        } else if (agent.pausing) {
           agent.pausing = false
           this.setStatus(agent, 'paused', 'Paused')
         } else if (msg.subtype === 'success') {
           this.setStatus(agent, 'idle', 'Done, waiting for you')
+          this.notice('finished', agent, 'Finished and waiting for you.')
         } else {
           this.setStatus(agent, 'idle', 'Stopped before finishing')
+          this.notice('finished', agent, 'Stopped before finishing.')
         }
         break
       }
@@ -461,10 +594,19 @@ export class AgentManager {
       toolName,
       at: Date.now()
     }
+    return this.requestApproval(agent, request, opts.signal)
+  }
+
+  /** Shows an approval card and waits for the person's answer. */
+  private requestApproval(agent: Agent, request: ApprovalRequest, signal?: AbortSignal): Promise<PermissionResult> {
     const prevText = agent.snap.statusText
     this.setStatus(agent, 'waiting', 'Waiting for you')
+    this.notice('approval', agent, request.title)
     return new Promise<PermissionResult>((resolve) => {
+      let settled = false
       const done = (r: PermissionResult): void => {
+        if (settled) return
+        settled = true
         this.approvals.delete(request.id)
         if (agent.snap.status === 'waiting' && !this.hasApprovals(agent.snap.id)) {
           this.setStatus(agent, 'working', prevText)
@@ -473,7 +615,7 @@ export class AgentManager {
         resolve(r)
       }
       this.approvals.set(request.id, { request, resolve: done })
-      opts.signal.addEventListener('abort', () => done({ behavior: 'deny', message: 'Cancelled.' }))
+      signal?.addEventListener('abort', () => done({ behavior: 'deny', message: 'Cancelled.' }))
       this.emit()
     })
   }
@@ -507,6 +649,11 @@ export class AgentManager {
   send(id: string, text: string): void {
     const agent = this.get(id)
     if (agent.snap.status === 'merged') throw new Error('This agent was merged. Start a new one for more work.')
+    const budget = agent.snap.budgetUsd
+    if (budget !== undefined && agent.snap.costUsd >= budget) {
+      throw new Error(`${agent.snap.name} has used its $${budget.toFixed(2)} budget. Raise the budget to let it continue.`)
+    }
+    agent.snap.overBudget = false
     this.log(agent, 'system', `You: ${text}`)
     if (agent.inbox) {
       this.flushMailbox(agent)
@@ -543,6 +690,46 @@ export class AgentManager {
     agent.snap.mode = mode
     this.log(agent, 'system', `Access changed to ${modeLabel(mode)}`)
     this.emit()
+  }
+
+  /** Changes (or removes, with null) an agent's spending limit. */
+  setBudget(id: string, budgetUsd: number | null): void {
+    const agent = this.get(id)
+    if (budgetUsd !== null && (!Number.isFinite(budgetUsd) || budgetUsd <= 0)) throw new Error('Enter a budget above $0.')
+    agent.snap.budgetUsd = budgetUsd ?? undefined
+    this.log(agent, 'system', budgetUsd === null ? 'Budget removed' : `Budget set to $${budgetUsd.toFixed(2)}`)
+    if (agent.snap.overBudget && (budgetUsd === null || agent.snap.costUsd < budgetUsd)) {
+      agent.snap.overBudget = false
+      this.setStatus(agent, 'paused', 'Paused, ready to continue')
+    }
+    this.emit()
+  }
+
+  async diff(id: string): Promise<FileDiff[]> {
+    const agent = this.get(id)
+    if (!existsSync(agent.snap.folder)) throw new Error('This agent’s folder no longer exists.')
+    return fullDiff(agent.snap.folder, agent.base)
+  }
+
+  /** SDK cost totals are per session; turn them into a running total for the agent. */
+  private updateCost(agent: Agent, sessionTotal: number): void {
+    if (agent.costMode === 'unknown') {
+      // A resumed session usually continues from its saved total; a fresh one starts at 0.
+      agent.costMode = agent.costBase > 0 && sessionTotal + 1e-9 >= agent.costBase ? 'absolute' : 'additive'
+    }
+    agent.snap.costUsd = agent.costMode === 'absolute' ? sessionTotal : agent.costBase + sessionTotal
+  }
+
+  private stopForBudget(agent: Agent): void {
+    const budget = agent.snap.budgetUsd ?? 0
+    agent.snap.overBudget = true
+    agent.pausing = false
+    this.log(agent, 'system', `Stopped at its $${budget.toFixed(2)} budget`)
+    this.setStatus(agent, 'paused', `Reached its $${budget.toFixed(2)} budget`)
+    this.notice('budget', agent, `Reached its $${budget.toFixed(2)} budget and stopped.`)
+    // End the session so the next one starts with the new limit.
+    agent.abort?.abort()
+    agent.inbox?.close()
   }
 
   async merge(id: string): Promise<string> {
@@ -638,9 +825,10 @@ export class AgentManager {
     if (this.emitTimer) return
     this.emitTimer = setTimeout(() => {
       this.emitTimer = null
-      if (this.web && !this.web.isDestroyed()) {
-        this.web.send(IPC.agentsUpdated, this.list(), this.pendingApprovals())
-      }
+      const list = this.list()
+      const approvals = this.pendingApprovals()
+      if (this.web && !this.web.isDestroyed()) this.web.send(IPC.agentsUpdated, list, approvals)
+      this.changeListener(list, approvals)
     }, 60)
   }
 
@@ -682,7 +870,16 @@ export class AgentManager {
           s.snap.status = 'paused'
           s.snap.statusText = 'Paused when Murmur closed'
         }
-        this.agents.set(s.snap.id, { snap: s.snap, repo: s.repo, base: s.base, sessionId: s.sessionId, mailbox: [], sent: [] })
+        this.agents.set(s.snap.id, {
+          snap: s.snap,
+          repo: s.repo,
+          base: s.base,
+          sessionId: s.sessionId,
+          mailbox: [],
+          sent: [],
+          costBase: s.snap.costUsd,
+          costMode: 'unknown'
+        })
       }
     } catch {
       /* first run */
@@ -746,6 +943,8 @@ function describe(tool: string, input: Record<string, unknown>, folder: string):
       return { kind: 'other', doing: 'Working with a helper', done: 'Started a helper agent', ask: 'start a helper agent' }
     case 'mcp__murmur__list_agents':
       return { kind: 'other', doing: 'Checking on the other agents', done: 'Checked on the other agents', ask: 'see the other agents' }
+    case 'mcp__murmur__start_agent':
+      return { kind: 'other', doing: 'Starting another agent', done: '', ask: 'start another agent' }
     case 'mcp__murmur__send_message':
       // Logged by the delivery itself, with who it went to.
       return { kind: 'message', doing: 'Messaging another agent', done: '', ask: 'message another agent' }

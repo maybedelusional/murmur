@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AccessMode, AgentSnapshot } from '@shared/types'
-import { MODE_LONG, clockTime } from '../labels'
+import { MODE_LONG, clockTime, money } from '../labels'
+import { parseBudget } from './NewAgentDialog'
 
 interface Props {
   agent: AgentSnapshot
@@ -9,7 +10,8 @@ interface Props {
   onPause(): void
   onResume(): void
   onSetMode(mode: AccessMode): void
-  onMerge(): void
+  onReview(): void
+  onSetBudget(budget: number | null): void
   onDiscard(): void
   onOpenTerminal(): void
 }
@@ -18,9 +20,14 @@ export function AgentPanel(p: Props) {
   const a = p.agent
   const [draft, setDraft] = useState('')
   const [confirming, setConfirming] = useState<'discard' | null>(null)
+  const [editingBudget, setEditingBudget] = useState(false)
+  const [budgetText, setBudgetText] = useState('')
   const feedRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => setConfirming(null), [a.id])
+  useEffect(() => {
+    setConfirming(null)
+    setEditingBudget(false)
+  }, [a.id])
   useEffect(() => {
     const el = feedRef.current
     if (el) el.scrollTop = el.scrollHeight
@@ -28,7 +35,6 @@ export function AgentPanel(p: Props) {
 
   const busy = a.status === 'working' || a.status === 'waiting' || a.status === 'starting'
   const hasChanges = a.files.length > 0
-  const clashes = a.files.filter((f) => f.sharedWith.length > 0)
 
   const send = (): void => {
     const text = draft.trim()
@@ -41,7 +47,13 @@ export function AgentPanel(p: Props) {
     <aside className="panel" aria-label={`${a.name} details`}>
       <div>
         <h2>{a.name}</h2>
-        <p className="task">{a.task}</p>
+        {a.teamName ? (
+          <p className="team-line">
+            {a.teamName}
+            {a.startedBy ? `, started by ${a.startedBy}` : ''}
+          </p>
+        ) : null}
+        <p className="task">{a.task.length > 400 ? `${a.task.slice(0, 399)}…` : a.task}</p>
       </div>
 
       {a.mode === 'auto' ? (
@@ -57,6 +69,11 @@ export function AgentPanel(p: Props) {
         </div>
       ) : null}
       {a.status === 'error' && a.error ? <div className="note danger">{a.error}</div> : null}
+      {a.overBudget ? (
+        <div className="note caution">
+          <strong>Stopped at its spending limit.</strong> Raise the limit below to let it continue.
+        </div>
+      ) : null}
 
       <dl className="facts">
         <dt>Access</dt>
@@ -85,7 +102,57 @@ export function AgentPanel(p: Props) {
         </dd>
         <dt>Changes</dt>
         <dd>{hasChanges ? `${a.linesAdded} lines added, ${a.linesRemoved} removed` : 'Nothing yet'}</dd>
+        <dt>Spent</dt>
+        <dd className="spent">
+          {editingBudget ? (
+            <form
+              className="budget-edit"
+              onSubmit={(e) => {
+                e.preventDefault()
+                const v = parseBudget(budgetText)
+                if (v === 'invalid') return
+                p.onSetBudget(v ?? null)
+                setEditingBudget(false)
+              }}
+            >
+              <span>{money(a.costUsd)} of $</span>
+              <input
+                className="input"
+                autoFocus
+                inputMode="decimal"
+                aria-label="Spending limit in dollars"
+                placeholder="no limit"
+                value={budgetText}
+                onChange={(e) => setBudgetText(e.target.value)}
+              />
+              <button className="btn" type="submit">
+                Set
+              </button>
+            </form>
+          ) : (
+            <>
+              <span title="An estimate of what this agent's work would cost at API prices">
+                {money(a.costUsd)}
+                {a.budgetUsd !== undefined ? ` of ${money(a.budgetUsd)}` : ''}
+              </span>
+              <button
+                className="link-btn"
+                onClick={() => {
+                  setBudgetText(a.budgetUsd !== undefined ? String(a.budgetUsd) : '')
+                  setEditingBudget(true)
+                }}
+              >
+                {a.budgetUsd !== undefined ? 'Change limit' : 'Set a limit'}
+              </button>
+            </>
+          )}
+        </dd>
       </dl>
+      {a.budgetUsd !== undefined ? (
+        <div className="meter" role="meter" aria-label="Spending limit used" aria-valuemin={0} aria-valuemax={a.budgetUsd} aria-valuenow={a.costUsd}>
+          <span style={{ width: `${Math.min(100, (a.costUsd / a.budgetUsd) * 100)}%` }} className={a.costUsd / a.budgetUsd > 0.85 ? 'high' : ''} />
+        </div>
+      ) : null}
 
       {hasChanges ? (
         <section>
@@ -163,7 +230,7 @@ export function AgentPanel(p: Props) {
             <button className="btn" onClick={p.onPause}>
               Pause
             </button>
-          ) : a.status === 'paused' || a.status === 'error' ? (
+          ) : (a.status === 'paused' || a.status === 'error') && !a.overBudget ? (
             <button className="btn" onClick={p.onResume}>
               Continue
             </button>
@@ -178,11 +245,11 @@ export function AgentPanel(p: Props) {
             <button
               className="btn primary"
               style={{ flexBasis: '100%' }}
-              disabled={busy || !hasChanges}
-              title={busy ? 'Pause it or wait until it’s done' : !hasChanges ? 'No changes to merge yet' : undefined}
-              onClick={p.onMerge}
+              disabled={!hasChanges}
+              title={!hasChanges ? 'No changes to review yet' : undefined}
+              onClick={p.onReview}
             >
-              {clashes.length ? 'Merge anyway' : 'Merge into project'}
+              Review and merge
             </button>
           ) : null}
         </div>

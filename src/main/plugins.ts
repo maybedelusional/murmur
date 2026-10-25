@@ -207,7 +207,8 @@ export async function inspectPlugin(dir: string): Promise<PluginContents> {
   if (fromFile && typeof fromFile === 'object') Object.keys(fromFile).forEach((k) => mcp.add(k))
   if (manifest.mcpServers && typeof manifest.mcpServers === 'object') Object.keys(manifest.mcpServers).forEach((k) => mcp.add(k))
 
-  return { skills, commands, agents, hooks, mcpServers: [...mcp] }
+  const themes = await listNames(join(dir, 'themes'), (n, isDir) => isDir && existsSync(join(dir, 'themes', n, 'theme.json')))
+  return { skills, commands, agents, hooks, mcpServers: [...mcp], themes }
 }
 
 export class PluginManager {
@@ -274,6 +275,13 @@ export class PluginManager {
       mySkills: this.readMySkills(),
       busy: [...this.busy]
     }
+  }
+
+  /** Theme folders inside enabled plugins (a Murmur addition to the plugin format). */
+  themeDirs(): Array<{ pluginName: string; dir: string }> {
+    return this.store.installed
+      .filter((p) => p.enabled && p.contents.themes?.length)
+      .flatMap((p) => (p.contents.themes ?? []).map((t) => ({ pluginName: p.name, dir: join(p.dir, 'themes', t) })))
   }
 
   /** Plugin folders to load into every agent session. */

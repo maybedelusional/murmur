@@ -1,0 +1,13 @@
+{
+  "name": "Aurora",
+  "bands": false,
+  "background": { "file": "aurora.webm", "dim": 0.1, "reactive": true },
+  "tokens": {
+    "ink": "#0B0E1C", "ink2": "#121628", "ink3": "#1B2036", "line": "#343A58",
+    "text": "#E4E6F2", "muted": "#9CA1BE", "faint": "#646A8A",
+    "accent": "#7FE0B8", "accentBorder": "#3E7A62", "accentText": "#C4F2DF",
+    "skyHigh": "#0B1026", "sky": "#2C2458", "skyLow": "#3A2A6B", "horizon": "#1F6B5C",
+    "treeline": "#05060C", "bird": "#E6E4F2",
+    "onSky": "#C3C0DC", "onSkyStrong": "#F2F0FA", "onSkyAccent": "#9FF0CC"
+  }
+}

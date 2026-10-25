@@ -1,0 +1,12 @@
+{
+  "name": "Fjord",
+  "bands": true,
+  "tokens": {
+    "ink": "#161B22", "ink2": "#1D232C", "ink3": "#272F3A", "line": "#3E4856",
+    "text": "#E4E8EE", "muted": "#9DA8B6", "faint": "#6A7584",
+    "accent": "#D9B88A", "accentBorder": "#7C6447", "accentText": "#EAD6BA",
+    "skyHigh": "#7E93A6", "sky": "#93A5B5", "skyLow": "#B4C0C9", "horizon": "#D9C7A8",
+    "treeline": "#1B222B", "bird": "#1B222B",
+    "onSky": "#26303B", "onSkyStrong": "#141A21", "onSkyAccent": "#5A2A10"
+  }
+}

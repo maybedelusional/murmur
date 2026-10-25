@@ -26,3 +26,9 @@ export function clockTime(ms: number): string {
   const d = new Date(ms)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
+
+/** Dollar amounts: cents for small numbers, whole dollars for big ones. */
+export function money(usd: number): string {
+  if (usd >= 100) return `$${Math.round(usd)}`
+  return `$${usd.toFixed(2)}`
+}

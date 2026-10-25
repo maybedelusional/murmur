@@ -22,6 +22,7 @@ function summary(c?: PluginContents): string {
   n(c.commands.length, 'command', 'commands')
   n(c.agents.length, 'agent', 'agents')
   n(c.mcpServers.length, 'tool server', 'tool servers')
+  n(c.themes?.length ?? 0, 'theme', 'themes')
   if (c.hooks) parts.push('hooks')
   return parts.join(', ')
 }
@@ -111,7 +112,8 @@ function Browse({ state, api, run, notify }: { state: PluginsState; api: MurmurA
           p.name.toLowerCase().includes(q) ||
           (p.description ?? '').toLowerCase().includes(q) ||
           (p.category ?? '').toLowerCase().includes(q) ||
-          (p.contents?.skills ?? []).some((s) => s.toLowerCase().includes(q))
+          (p.contents?.skills ?? []).some((s) => s.toLowerCase().includes(q)) ||
+          ((p.contents?.themes?.length ?? 0) > 0 && 'theme'.includes(q.replace(/s$/, '')))
       )
   }, [state.marketplaces, market, query])
 
@@ -124,7 +126,7 @@ function Browse({ state, api, run, notify }: { state: PluginsState; api: MurmurA
         <input
           className="input"
           type="search"
-          placeholder="Search plugins and skills"
+          placeholder="Search plugins, skills and themes"
           aria-label="Search plugins and skills"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -275,6 +277,7 @@ function PluginDetail(props: {
           <ContentList title="Commands" items={contents.commands.map((c) => `/${c}`)} />
           <ContentList title="Helper agents" items={contents.agents} />
           <ContentList title="Tool servers" items={contents.mcpServers} />
+          <ContentList title="Themes" items={contents.themes ?? []} />
           {contents.hooks ? <ContentList title="Hooks" items={['Runs scripts when agents use tools']} /> : null}
         </div>
       ) : (

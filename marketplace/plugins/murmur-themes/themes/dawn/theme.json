@@ -1,0 +1,12 @@
+{
+  "name": "Dawn",
+  "bands": true,
+  "tokens": {
+    "ink": "#1E191D", "ink2": "#262025", "ink3": "#31292F", "line": "#4E434B",
+    "text": "#EEE6EA", "muted": "#B0A3AB", "faint": "#786B74",
+    "accent": "#F2A57E", "accentBorder": "#8B5A43", "accentText": "#F6CDB8",
+    "skyHigh": "#C9B6CF", "sky": "#E2C6CB", "skyLow": "#F1D3C4", "horizon": "#F6B98E",
+    "treeline": "#2A2026", "bird": "#2A2026",
+    "onSky": "#3A2D33", "onSkyStrong": "#211A1E", "onSkyAccent": "#6B2A12"
+  }
+}

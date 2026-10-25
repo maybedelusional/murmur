@@ -11,7 +11,19 @@
       "description": "Skills that help agents hand work to each other cleanly: handoff notes and review requests.",
       "version": "1.0.0",
       "category": "productivity",
-      "author": { "name": "maybedelusional" }
+      "author": {
+        "name": "maybedelusional"
+      }
+    },
+    {
+      "name": "murmur-themes",
+      "source": "./plugins/murmur-themes",
+      "description": "Three themes for Murmur: Fjord, Dawn and Aurora (an animated one). Themes don't run any code.",
+      "version": "1.0.0",
+      "category": "themes",
+      "author": {
+        "name": "maybedelusional"
+      }
     }
   ]
 }

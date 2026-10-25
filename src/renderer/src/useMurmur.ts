@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { AgentSnapshot, ApprovalRequest, NowPlaying, ProjectInfo, Result, Settings, UpdateState } from '@shared/types'
+import type { AgentSnapshot, ApprovalRequest, NowPlaying, ProjectInfo, Result, Settings, ThemeInfo, UpdateState } from '@shared/types'
+import { applyTokens } from './theme'
 
 export interface MurmurState {
   project: ProjectInfo | null
@@ -9,6 +10,8 @@ export interface MurmurState {
   nowPlaying: NowPlaying
   update: UpdateState
   error: string | null
+  themes: ThemeInfo[]
+  theme: ThemeInfo | null
 }
 
 export function useMurmur() {
@@ -20,20 +23,31 @@ export function useMurmur() {
     settings: null,
     nowPlaying: { available: false },
     update: { kind: 'none' },
-    error: null
+    error: null,
+    themes: [],
+    theme: null
   })
 
   useEffect(() => {
-    void Promise.all([api.project.current(), api.agents.list(), api.settings.get()]).then(([project, agents, settings]) =>
-      setState((s) => ({ ...s, project, agents, settings }))
+    void Promise.all([api.project.current(), api.agents.list(), api.settings.get(), api.themes.list()]).then(
+      ([project, agents, settings, themes]) => {
+        const theme = themes.find((t) => t.id === settings.theme) ?? themes[0] ?? null
+        setState((s) => ({ ...s, project, agents, settings, themes, theme }))
+      }
     )
     const offs = [
+      api.themes.onChange((themes, theme) => setState((s) => ({ ...s, themes, theme, settings: s.settings ? { ...s.settings, theme: theme.id } : s.settings }))),
       api.agents.onUpdate((agents, approvals) => setState((s) => ({ ...s, agents, approvals }))),
       api.media.onChange((nowPlaying) => setState((s) => ({ ...s, nowPlaying }))),
       api.updates.onChange((update) => setState((s) => ({ ...s, update })))
     ]
     return () => offs.forEach((off) => off())
   }, [api])
+
+  // The active theme drives every colour in the app.
+  useEffect(() => {
+    if (state.theme) applyTokens(state.theme.tokens)
+  }, [state.theme])
 
   const showError = useCallback((error: string | null) => setState((s) => ({ ...s, error })), [])
 

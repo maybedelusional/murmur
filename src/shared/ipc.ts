@@ -20,6 +20,21 @@ export const IPC = {
   agentsAnswer: 'agents:answer',
   agentsUpdated: 'agents:updated',
   agentsMessage: 'agents:message',
+  agentsFocus: 'agents:focus',
+  agentsSetBudget: 'agents:set-budget',
+  agentsDiff: 'agents:diff',
+  agentsStartTeam: 'agents:start-team',
+
+  recipesList: 'recipes:list',
+  recipesSave: 'recipes:save',
+  recipesRemove: 'recipes:remove',
+
+  themesList: 'themes:list',
+  themesUse: 'themes:use',
+  themesSave: 'themes:save',
+  themesRemove: 'themes:remove',
+  themesChooseBackground: 'themes:choose-background',
+  themesChanged: 'themes:changed',
 
   pluginsState: 'plugins:state',
   pluginsRefresh: 'plugins:refresh',

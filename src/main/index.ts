@@ -1,8 +1,23 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Notification, shell } from 'electron'
 import { join } from 'node:path'
 import { IPC } from '@shared/ipc'
-import type { AccessMode, MySkill, NewAgentInput, ProjectInfo, Result, Settings, UpdateState } from '@shared/types'
-import { AgentManager } from './agents'
+import type {
+  AccessMode,
+  AgentSnapshot,
+  ApprovalRequest,
+  MySkill,
+  NewAgentInput,
+  ProjectInfo,
+  Recipe,
+  Result,
+  Settings,
+  StartTeamInput,
+  ThemeDraft,
+  UpdateState
+} from '@shared/types'
+import { AgentManager, type AgentNotice } from './agents'
+import { getRecipe, listRecipes, removeRecipe, saveRecipe } from './recipes'
+import { ThemeManager, registerMediaScheme } from './themes'
 import { PluginManager } from './plugins'
 import { MediaWatcher } from './media'
 import { getSettings, setSettings } from './settings'
@@ -11,6 +26,8 @@ import { restartToUpdate, startUpdater } from './updater'
 const agents = new AgentManager()
 const plugins = new PluginManager()
 agents.usePlugins(() => plugins.enabledForAgents())
+const themes = new ThemeManager(() => plugins.themeDirs())
+registerMediaScheme()
 let win: BrowserWindow | null = null
 let media: MediaWatcher | null = null
 
@@ -28,6 +45,48 @@ function handle<A extends unknown[], T>(channel: string, fn: (...args: A) => Pro
 function projectInfo(): ProjectInfo | null {
   const p = agents.project
   return p ? { path: p.root, name: p.name, branch: p.branch } : null
+}
+
+// ---------- notifications and the taskbar ----------
+
+const NOTICE_TITLE: Record<AgentNotice, (name: string) => string> = {
+  approval: (n) => `${n} needs you`,
+  finished: (n) => `${n} is done`,
+  error: (n) => `${n} stopped with an error`,
+  budget: (n) => `${n} reached its budget`
+}
+
+function notify(kind: AgentNotice, agent: AgentSnapshot, text: string): void {
+  const s = getSettings()
+  const wanted = kind === 'approval' ? s.notifyApprovals : kind === 'finished' ? s.notifyFinished : s.notifyErrors
+  if (!wanted || !Notification.isSupported()) return
+  // Don't pop up about things the person is already looking at.
+  if (win?.isFocused() && !win.isMinimized()) return
+  const n = new Notification({ title: NOTICE_TITLE[kind](agent.name), body: text, silent: kind === 'finished' })
+  n.on('click', () => {
+    if (!win) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+    win.webContents.send(IPC.agentsFocus, agent.id)
+  })
+  n.show()
+  if (kind === 'approval' && win && !win.isFocused()) win.flashFrame(true)
+}
+
+/** Taskbar: moving bar while agents work, yellow when one waits for you, red on errors. */
+function updateTaskbar(list: AgentSnapshot[], approvals: ApprovalRequest[]): void {
+  if (!win || win.isDestroyed()) return
+  if (list.some((a) => a.status === 'error')) win.setProgressBar(1, { mode: 'error' })
+  else if (approvals.length) win.setProgressBar(1, { mode: 'paused' })
+  else if (list.some((a) => a.status === 'working' || a.status === 'starting')) win.setProgressBar(2, { mode: 'indeterminate' })
+  else win.setProgressBar(-1)
+}
+
+async function sendThemes(): Promise<void> {
+  if (!win || win.isDestroyed()) return
+  const list = await themes.list()
+  win.webContents.send(IPC.themesChanged, list, await themes.current())
 }
 
 function createWindow(): void {
@@ -51,6 +110,7 @@ function createWindow(): void {
   })
 
   win.once('ready-to-show', () => win?.show())
+  win.on('focus', () => win?.flashFrame(false))
   agents.attach(win.webContents)
 
   // Links open in the browser, never inside Murmur.
@@ -93,6 +153,30 @@ function registerIpc(): void {
   handle(IPC.agentsDiscard, (id: string) => agents.discard(id))
   handle(IPC.agentsOpenTerminal, (id: string) => agents.openTerminal(id))
   handle(IPC.agentsAnswer, (approvalId: string, allow: boolean) => agents.answer(approvalId, allow))
+  handle(IPC.agentsSetBudget, (id: string, budget: number | null) => agents.setBudget(id, budget))
+  handle(IPC.agentsDiff, (id: string) => agents.diff(id))
+  handle(IPC.agentsStartTeam, (input: StartTeamInput) => agents.startTeam(getRecipe(input.recipeId), input.task, input.budgetUsd))
+
+  ipcMain.handle(IPC.recipesList, () => listRecipes())
+  handle(IPC.recipesSave, (recipe: Recipe) => saveRecipe(recipe))
+  handle(IPC.recipesRemove, (id: string) => removeRecipe(id))
+
+  ipcMain.handle(IPC.themesList, () => themes.list())
+  handle(IPC.themesUse, async (id: string) => {
+    const t = await themes.use(id)
+    void sendThemes()
+    return t
+  })
+  handle(IPC.themesSave, async (draft: ThemeDraft) => {
+    const t = await themes.save(draft)
+    void sendThemes()
+    return t
+  })
+  handle(IPC.themesRemove, async (id: string) => {
+    await themes.remove(id)
+    void sendThemes()
+  })
+  ipcMain.handle(IPC.themesChooseBackground, () => themes.chooseBackground(win).catch(() => null))
 
   ipcMain.handle(IPC.pluginsState, () => plugins.state())
   handle(IPC.pluginsRefresh, () => plugins.refreshAll())
@@ -126,7 +210,10 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     app.setAppUserModelId('com.maybedelusional.murmur')
+    themes.handleMedia()
     registerIpc()
+    agents.onNotice(notify)
+    agents.onChange(updateTaskbar)
 
     const last = getSettings().lastProject
     if (last) await agents.openProject(last).catch(() => undefined)
@@ -138,7 +225,16 @@ if (!gotLock) {
 
     startUpdater((state: UpdateState) => win?.webContents.send(IPC.updateChanged, state))
 
-    plugins.onChange((state) => win?.webContents.send(IPC.pluginsChanged, state))
+    let themeCount = -1
+    plugins.onChange((state) => {
+      win?.webContents.send(IPC.pluginsChanged, state)
+      // A plugin with themes was installed, removed or switched: refresh the theme list.
+      const count = plugins.themeDirs().length
+      if (count !== themeCount) {
+        themeCount = count
+        void sendThemes()
+      }
+    })
     void plugins.init()
   })
 

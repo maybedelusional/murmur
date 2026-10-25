@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { mkdir, readFile } from 'node:fs/promises'
 import { dirname, join, basename } from 'node:path'
+import type { DiffHunk, FileDiff } from '@shared/types'
 
 export class GitError extends Error {}
 
@@ -143,4 +144,96 @@ export async function mergeBranch(repo: string, branch: string): Promise<string>
     throw e
   }
   return target
+}
+
+
+const MAX_LINES_PER_FILE = 3000
+
+/** Everything the agent changed since it started, as hunks the review screen can show. */
+export async function fullDiff(folder: string, base: string): Promise<FileDiff[]> {
+  const text = await git(folder, ['diff', '--no-color', '--no-ext-diff', '-M', '-U3', base])
+  const files = parseUnifiedDiff(text)
+
+  const untracked = (await git(folder, ['ls-files', '--others', '--exclude-standard'])).split('\n').filter(Boolean)
+  for (const file of untracked) {
+    let content: string | null = null
+    try {
+      const buf = await readFile(join(folder, file))
+      content = buf.includes(0) ? null : buf.toString('utf8')
+    } catch {
+      content = null
+    }
+    const lines = content === null ? [] : content.replace(/\n$/, '').split('\n')
+    const tooLarge = lines.length > MAX_LINES_PER_FILE
+    files.push({
+      file,
+      status: 'added',
+      binary: content === null,
+      tooLarge,
+      added: lines.length,
+      removed: 0,
+      hunks:
+        content === null || tooLarge || !lines.length
+          ? []
+          : [{ header: `@@ -0,0 +1,${lines.length} @@`, lines: lines.map((t, i) => ({ kind: 'add' as const, newNo: i + 1, text: t })) }]
+    })
+  }
+  return files.sort((a, b) => a.file.localeCompare(b.file))
+}
+
+export function parseUnifiedDiff(text: string): FileDiff[] {
+  const out: FileDiff[] = []
+  let cur: FileDiff | null = null
+  let hunk: DiffHunk | null = null
+  let oldNo = 0
+  let newNo = 0
+  let count = 0
+
+  const unquote = (p: string): string => p.replace(/^"|"$/g, '').replace(/^[ab]\//, '')
+
+  for (const line of text.split('\n')) {
+    if (line.startsWith('diff --git ')) {
+      const m = /^diff --git (.+?) (b\/.+|"b\/.+")$/.exec(line)
+      const file = m ? unquote(m[2]) : line.slice(11)
+      cur = { file, status: 'modified', binary: false, tooLarge: false, added: 0, removed: 0, hunks: [] }
+      out.push(cur)
+      hunk = null
+      count = 0
+      continue
+    }
+    if (!cur) continue
+    if (line.startsWith('new file mode')) cur.status = 'added'
+    else if (line.startsWith('deleted file mode')) cur.status = 'deleted'
+    else if (line.startsWith('rename from ')) {
+      cur.status = 'renamed'
+      cur.oldFile = line.slice(12)
+    } else if (line.startsWith('rename to ')) cur.file = line.slice(10)
+    else if (line.startsWith('Binary files ')) cur.binary = true
+    else if (line.startsWith('@@')) {
+      const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line)
+      oldNo = m ? Number(m[1]) : 0
+      newNo = m ? Number(m[2]) : 0
+      hunk = { header: line, lines: [] }
+      if (count < MAX_LINES_PER_FILE) cur.hunks.push(hunk)
+    } else if (hunk && (line.startsWith('+') || line.startsWith('-') || line.startsWith(' '))) {
+      // (The ---/+++ file headers come before the first @@, while hunk is still null.)
+      const kind = line[0] === '+' ? 'add' : line[0] === '-' ? 'del' : 'context'
+      if (kind === 'add') cur.added++
+      if (kind === 'del') cur.removed++
+      count++
+      if (count > MAX_LINES_PER_FILE) {
+        cur.tooLarge = true
+        continue
+      }
+      hunk.lines.push({
+        kind,
+        oldNo: kind === 'add' ? undefined : oldNo,
+        newNo: kind === 'del' ? undefined : newNo,
+        text: line.slice(1)
+      })
+      if (kind !== 'add') oldNo++
+      if (kind !== 'del') newNo++
+    }
+  }
+  return out
 }

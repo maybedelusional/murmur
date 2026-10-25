@@ -12,7 +12,11 @@ function defaults(): Settings {
     worktreeRoot: process.platform === 'win32' ? 'C:\\cw' : join(homedir(), '.murmur', 'worktrees'),
     allowBypass: false,
     hideAutoCaution: false,
-    theme: 'dusk'
+    theme: 'dusk',
+    defaultBudgetUsd: 0,
+    notifyApprovals: true,
+    notifyFinished: true,
+    notifyErrors: true
   }
 }
 
