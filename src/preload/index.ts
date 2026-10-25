@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { IPC } from '@shared/ipc'
-import type { AgentSnapshot, ApprovalRequest, MurmurApi, NowPlaying, UpdateState } from '@shared/types'
+import type { AgentMessageEvent, AgentSnapshot, ApprovalRequest, MurmurApi, NowPlaying, PluginsState, UpdateState } from '@shared/types'
 
 function listen<T extends unknown[]>(channel: string, cb: (...args: T) => void): () => void {
   const fn = (_e: IpcRendererEvent, ...args: unknown[]): void => cb(...(args as T))
@@ -31,7 +31,21 @@ const api: MurmurApi = {
     discard: (id) => ipcRenderer.invoke(IPC.agentsDiscard, id),
     openTerminal: (id) => ipcRenderer.invoke(IPC.agentsOpenTerminal, id),
     answer: (approvalId, allow) => ipcRenderer.invoke(IPC.agentsAnswer, approvalId, allow),
-    onUpdate: (cb) => listen<[AgentSnapshot[], ApprovalRequest[]]>(IPC.agentsUpdated, cb)
+    onUpdate: (cb) => listen<[AgentSnapshot[], ApprovalRequest[]]>(IPC.agentsUpdated, cb),
+    onMessage: (cb) => listen<[AgentMessageEvent]>(IPC.agentsMessage, cb)
+  },
+  plugins: {
+    state: () => ipcRenderer.invoke(IPC.pluginsState),
+    refresh: () => ipcRenderer.invoke(IPC.pluginsRefresh),
+    install: (key, allowCode) => ipcRenderer.invoke(IPC.pluginsInstall, key, allowCode),
+    update: (key) => ipcRenderer.invoke(IPC.pluginsUpdate, key),
+    uninstall: (key) => ipcRenderer.invoke(IPC.pluginsUninstall, key),
+    setEnabled: (key, enabled) => ipcRenderer.invoke(IPC.pluginsSetEnabled, key, enabled),
+    addMarketplace: (repo) => ipcRenderer.invoke(IPC.pluginsAddMarketplace, repo),
+    removeMarketplace: (key) => ipcRenderer.invoke(IPC.pluginsRemoveMarketplace, key),
+    saveSkill: (skill, previousName) => ipcRenderer.invoke(IPC.pluginsSaveSkill, skill, previousName),
+    deleteSkill: (name) => ipcRenderer.invoke(IPC.pluginsDeleteSkill, name),
+    onChange: (cb) => listen<[PluginsState]>(IPC.pluginsChanged, cb)
   },
   settings: {
     get: () => ipcRenderer.invoke(IPC.settingsGet),

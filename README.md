@@ -26,6 +26,8 @@ Then open a project folder (any git repository with at least one commit) and pre
 - **Access modes** per agent: *Ask before every action*, *Let it edit files*, *Auto* (a safety classifier decides, shown with a caution note) and *Skip all checks* (off unless you enable it under Settings → Advanced).
 - **Murmur's own rules** apply in every mode: agents can't push, can't switch to main, and can't write outside their own folder.
 - **Merging** commits whatever the agent left uncommitted and merges its branch into whatever branch your main folder has checked out. If that would conflict, nothing is changed and you're told which files clash.
+- **Agents talk to each other.** Every agent gets two Murmur tools: `list_agents` and `send_message`. A builder can tell the reviewer its branch is ready; you see a few birds fly from one flock to the other, and both agents' activity shows the message. Each agent can send at most 12 messages per 10 minutes so two agents can't chat forever, and messages to a paused agent wait until it continues.
+- **Plugins and skills** use Claude Code's own format, so anything built for Claude Code works here. Murmur lists Anthropic's official marketplace, Anthropic's skills, the Claude community marketplace and Murmur's own (`marketplace/` in this repo); you can add any other GitHub marketplace. Installed plugins load into every new agent. Plugins that run code on your computer (hooks or tool servers) are marked, need an extra confirmation, and are installed switched off when Murmur couldn't check them first. Under **My skills** you can write your own skills; they're saved as a normal plugin.
 - **Now playing** reads Windows' media controls, so it works with Spotify, a browser or any other player without logging in.
 - **Agents survive restarts.** If you close Murmur mid-task, the agent comes back paused; press Continue to pick up where it left off.
 
@@ -51,6 +53,7 @@ src/main/       Electron main process: agents, git worktrees, safety rules, medi
 src/preload/    The small, typed bridge the UI talks through
 src/renderer/   The React UI: title bar, agent list, the sky with its flocks, panels
 src/shared/     Types shared by both sides
+marketplace/    Murmur's community marketplace (a Claude Code marketplace)
 ```
 
 Open `npm run dev`'s renderer URL in a normal browser to work on the UI with sample data.

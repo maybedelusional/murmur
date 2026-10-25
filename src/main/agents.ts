@@ -3,10 +3,13 @@ import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, relative, basename, resolve as resolvePath } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { z } from 'zod'
 import type {
   Query,
   SDKMessage,
+  SDKMessageOrigin,
   SDKUserMessage,
+  SdkPluginConfig,
   PermissionMode,
   PermissionResult,
   CanUseTool
@@ -14,6 +17,7 @@ import type {
 import type {
   AccessMode,
   ActivityItem,
+  AgentMessageEvent,
   AgentSnapshot,
   ApprovalRequest,
   NewAgentInput,
@@ -56,6 +60,7 @@ function rolePrompt(a: AgentSnapshot): string {
     `You are "${a.name}", one of several Claude agents working in parallel inside Murmur.`,
     `You work in your own git worktree at ${a.folder} on branch ${a.branch}. Other agents have their own folders and branches.`,
     'Only change files inside your folder. Never push, never switch branches, and never touch the main project folder. The person merges your branch from Murmur when they are happy with it.',
+    'You can see the other agents with the murmur list_agents tool and message them with send_message: for example tell the reviewer your branch is ready, or ask the planner a question. Their branches live in the same repository, so you can read them with git. Keep messages short and only send one when it moves the work forward; never reply just to acknowledge.',
     ROLE_BRIEF[a.role]
   ]
     .filter(Boolean)
@@ -68,12 +73,12 @@ class Inbox implements AsyncIterable<SDKUserMessage> {
   private waiting: ((r: IteratorResult<SDKUserMessage>) => void) | null = null
   private closed = false
 
-  push(text: string): void {
+  push(text: string, origin: SDKMessageOrigin = { kind: 'human' }): void {
     const msg: SDKUserMessage = {
       type: 'user',
       message: { role: 'user', content: text },
       parent_tool_use_id: null,
-      origin: { kind: 'human' }
+      origin
     }
     if (this.waiting) {
       const w = this.waiting
@@ -110,7 +115,15 @@ interface Agent {
   abort?: AbortController
   pausing?: boolean
   diffTimer?: NodeJS.Timeout
+  /** Messages from other agents that arrived while this one was paused. */
+  mailbox: Array<{ text: string; origin: SDKMessageOrigin }>
+  /** When this agent sent messages recently, for the rate limit. */
+  sent: number[]
 }
+
+/** An agent can send at most this many messages per window, so two agents can't chat forever. */
+const MESSAGE_LIMIT = 12
+const MESSAGE_WINDOW_MS = 10 * 60 * 1000
 
 interface PendingApproval {
   request: ApprovalRequest
@@ -148,9 +161,15 @@ export class AgentManager {
   private web: WebContents | null = null
   private emitTimer: NodeJS.Timeout | null = null
   private saveTimer: NodeJS.Timeout | null = null
+  private pluginSource: () => SdkPluginConfig[] = () => []
 
   constructor() {
     this.load()
+  }
+
+  /** Where agents get their installed plugins and skills from. */
+  usePlugins(source: () => SdkPluginConfig[]): void {
+    this.pluginSource = source
   }
 
   attach(web: WebContents): void {
@@ -219,7 +238,7 @@ export class AgentManager {
       costUsd: 0,
       createdAt: Date.now()
     }
-    const agent: Agent = { snap, repo: this.repo.root, base }
+    const agent: Agent = { snap, repo: this.repo.root, base, mailbox: [], sent: [] }
     this.agents.set(snap.id, agent)
     this.log(agent, 'system', `Created its own folder on branch ${branch}`)
     this.start(agent, snap.task)
@@ -238,13 +257,109 @@ export class AgentManager {
     return `${base} ${taken.size + 1}`
   }
 
-  private start(agent: Agent, firstMessage: string): void {
+  private start(agent: Agent, firstMessage?: string): void {
     const inbox = new Inbox()
     const abort = new AbortController()
     agent.inbox = inbox
     agent.abort = abort
-    inbox.push(firstMessage)
+    this.flushMailbox(agent)
+    if (firstMessage) inbox.push(firstMessage)
     void this.run(agent, inbox, abort)
+  }
+
+  /** Hands over messages that other agents sent while this one was paused. */
+  private flushMailbox(agent: Agent): void {
+    if (!agent.inbox) return
+    for (const m of agent.mailbox.splice(0)) agent.inbox.push(m.text, m.origin)
+  }
+
+  /** The tools every agent gets for talking to the others. */
+  private murmurTools(sdk: typeof import('@anthropic-ai/claude-agent-sdk'), agent: Agent) {
+    return sdk.createSdkMcpServer({
+      name: 'murmur',
+      version: '1.0.0',
+      tools: [
+        sdk.tool(
+          'list_agents',
+          'List the other agents working on this project in Murmur: their names, roles, tasks, branches and what they are doing right now.',
+          {},
+          async () => {
+            const others = [...this.agents.values()]
+              .filter((o) => o !== agent && o.repo === agent.repo)
+              .map((o) => ({
+                name: o.snap.name,
+                role: o.snap.role,
+                task: o.snap.task,
+                branch: o.snap.branch,
+                status: o.snap.status,
+                doing: o.snap.statusText
+              }))
+            const text = others.length ? JSON.stringify(others, null, 2) : 'You are the only agent on this project right now.'
+            return { content: [{ type: 'text' as const, text }] }
+          },
+          { annotations: { readOnlyHint: true } }
+        ),
+        sdk.tool(
+          'send_message',
+          'Send a short message to another agent on this project, by name (for example "Reviewer" or "Builder A"). Use it to hand off work, ask a question or report something they need. They see it as a message from you.',
+          {
+            to: z.string().describe('The other agent’s name, as list_agents shows it'),
+            message: z.string().min(1).max(4000).describe('What you want to tell them')
+          },
+          async ({ to, message }) => {
+            const text = this.deliver(agent, to, message)
+            return { content: [{ type: 'text' as const, text }] }
+          }
+        )
+      ]
+    })
+  }
+
+  /** Delivers a message from one agent to another. Returns what the sender is told. */
+  private deliver(from: Agent, toName: string, message: string): string {
+    const others = [...this.agents.values()].filter((o) => o !== from && o.repo === from.repo)
+    const to = others.find((o) => o.snap.name.toLowerCase() === toName.trim().toLowerCase())
+    if (!to) {
+      const names = others.map((o) => o.snap.name).join(', ')
+      return names ? `There is no agent called "${toName}". The others are: ${names}.` : 'There are no other agents on this project.'
+    }
+    if (to.snap.status === 'merged') return `${to.snap.name} has finished and been merged, so it can't receive messages.`
+
+    const now = Date.now()
+    from.sent = from.sent.filter((t) => now - t < MESSAGE_WINDOW_MS)
+    if (from.sent.length >= MESSAGE_LIMIT) {
+      return 'Not sent: you have sent a lot of messages in the last few minutes. Carry on with your own work, or wait for the person.'
+    }
+    from.sent.push(now)
+
+    const body = `Message from ${from.snap.name} (another agent in Murmur, on branch ${from.snap.branch}):\n\n${message}`
+    const runsWithoutAsking = from.snap.mode === 'auto' || from.snap.mode === 'bypass'
+    const origin: SDKMessageOrigin = {
+      kind: 'peer',
+      from: from.snap.id,
+      name: from.snap.name,
+      fromMode: runsWithoutAsking ? 'bypass' : 'prompting'
+    }
+
+    const clip = message.length > 160 ? `${message.slice(0, 159)}…` : message
+    this.log(from, 'message', `To ${to.snap.name}: ${clip}`)
+    this.log(to, 'message', `From ${from.snap.name}: ${clip}`)
+    if (this.web && !this.web.isDestroyed()) {
+      const event: AgentMessageEvent = { fromId: from.snap.id, toId: to.snap.id, text: clip, at: now }
+      this.web.send(IPC.agentsMessage, event)
+    }
+
+    if (to.snap.status === 'paused' || to.snap.status === 'error' || to.pausing) {
+      to.mailbox.push({ text: body, origin })
+      return `${to.snap.name} is paused. They'll get your message when they continue.`
+    }
+    if (to.inbox) to.inbox.push(body, origin)
+    else {
+      to.mailbox.push({ text: body, origin })
+      this.start(to)
+    }
+    if (to.snap.status === 'idle') this.setStatus(to, 'working', `Reading a message from ${from.snap.name}`)
+    return `Delivered to ${to.snap.name}.`
   }
 
   private async run(agent: Agent, inbox: Inbox, abort: AbortController): Promise<void> {
@@ -261,6 +376,10 @@ export class AgentManager {
           canUseTool,
           hooks: { PreToolUse: [{ hooks: [makeGuard(a.folder, resolvePath(agent.repo))] }] },
           systemPrompt: { type: 'preset', preset: 'claude_code', append: rolePrompt(a) },
+          mcpServers: { murmur: this.murmurTools(sdk, agent) },
+          // Murmur's own messaging tools never need approval.
+          allowedTools: ['mcp__murmur__list_agents', 'mcp__murmur__send_message'],
+          plugins: this.pluginSource(),
           pathToClaudeCodeExecutable: claudeBinary(),
           abortController: abort,
           resume: agent.sessionId,
@@ -297,7 +416,7 @@ export class AgentManager {
             this.log(agent, 'say', block.text.trim().slice(0, 400))
           } else if (block.type === 'tool_use') {
             const d = describe(block.name, (block.input ?? {}) as Record<string, unknown>, agent.snap.folder)
-            this.log(agent, d.kind, d.done)
+            if (d.done) this.log(agent, d.kind, d.done)
             if (agent.snap.status !== 'waiting') this.setStatus(agent, 'working', d.doing)
           }
         }
@@ -389,8 +508,10 @@ export class AgentManager {
     const agent = this.get(id)
     if (agent.snap.status === 'merged') throw new Error('This agent was merged. Start a new one for more work.')
     this.log(agent, 'system', `You: ${text}`)
-    if (agent.inbox) agent.inbox.push(text)
-    else this.start(agent, text)
+    if (agent.inbox) {
+      this.flushMailbox(agent)
+      agent.inbox.push(text)
+    } else this.start(agent, text)
     this.setStatus(agent, 'working', 'Thinking')
   }
 
@@ -561,7 +682,7 @@ export class AgentManager {
           s.snap.status = 'paused'
           s.snap.statusText = 'Paused when Murmur closed'
         }
-        this.agents.set(s.snap.id, { snap: s.snap, repo: s.repo, base: s.base, sessionId: s.sessionId })
+        this.agents.set(s.snap.id, { snap: s.snap, repo: s.repo, base: s.base, sessionId: s.sessionId, mailbox: [], sent: [] })
       }
     } catch {
       /* first run */
@@ -623,7 +744,15 @@ function describe(tool: string, input: Record<string, unknown>, folder: string):
     case 'Task':
     case 'Agent':
       return { kind: 'other', doing: 'Working with a helper', done: 'Started a helper agent', ask: 'start a helper agent' }
-    default:
-      return { kind: 'other', doing: `Using ${tool}`, done: `Used ${tool}`, ask: `use ${tool}` }
+    case 'mcp__murmur__list_agents':
+      return { kind: 'other', doing: 'Checking on the other agents', done: 'Checked on the other agents', ask: 'see the other agents' }
+    case 'mcp__murmur__send_message':
+      // Logged by the delivery itself, with who it went to.
+      return { kind: 'message', doing: 'Messaging another agent', done: '', ask: 'message another agent' }
+    default: {
+      // Plugin tools look like mcp__plugin_name__tool; show something readable.
+      const nice = tool.startsWith('mcp__') ? tool.split('__').slice(1).join(' ').replace(/_/g, ' ') : tool
+      return { kind: 'other', doing: `Using ${nice}`, done: `Used ${nice}`, ask: `use ${nice}` }
+    }
   }
 }

@@ -1,13 +1,16 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { join } from 'node:path'
 import { IPC } from '@shared/ipc'
-import type { AccessMode, NewAgentInput, ProjectInfo, Result, Settings, UpdateState } from '@shared/types'
+import type { AccessMode, MySkill, NewAgentInput, ProjectInfo, Result, Settings, UpdateState } from '@shared/types'
 import { AgentManager } from './agents'
+import { PluginManager } from './plugins'
 import { MediaWatcher } from './media'
 import { getSettings, setSettings } from './settings'
 import { restartToUpdate, startUpdater } from './updater'
 
 const agents = new AgentManager()
+const plugins = new PluginManager()
+agents.usePlugins(() => plugins.enabledForAgents())
 let win: BrowserWindow | null = null
 let media: MediaWatcher | null = null
 
@@ -91,6 +94,17 @@ function registerIpc(): void {
   handle(IPC.agentsOpenTerminal, (id: string) => agents.openTerminal(id))
   handle(IPC.agentsAnswer, (approvalId: string, allow: boolean) => agents.answer(approvalId, allow))
 
+  ipcMain.handle(IPC.pluginsState, () => plugins.state())
+  handle(IPC.pluginsRefresh, () => plugins.refreshAll())
+  handle(IPC.pluginsInstall, (key: string, allowCode?: boolean) => plugins.install(key, allowCode))
+  handle(IPC.pluginsUpdate, (key: string) => plugins.update(key))
+  handle(IPC.pluginsUninstall, (key: string) => plugins.uninstall(key))
+  handle(IPC.pluginsSetEnabled, (key: string, enabled: boolean) => plugins.setEnabled(key, enabled))
+  handle(IPC.pluginsAddMarketplace, (repo: string) => plugins.addMarketplace(repo))
+  handle(IPC.pluginsRemoveMarketplace, (key: string) => plugins.removeMarketplace(key))
+  handle(IPC.pluginsSaveSkill, (skill: MySkill, previousName?: string) => plugins.saveSkill(skill, previousName))
+  handle(IPC.pluginsDeleteSkill, (name: string) => plugins.deleteSkill(name))
+
   ipcMain.handle(IPC.settingsGet, () => getSettings())
   ipcMain.handle(IPC.settingsSet, (_e, patch: Partial<Settings>) => setSettings(patch))
 
@@ -123,6 +137,9 @@ if (!gotLock) {
     media.start()
 
     startUpdater((state: UpdateState) => win?.webContents.send(IPC.updateChanged, state))
+
+    plugins.onChange((state) => win?.webContents.send(IPC.pluginsChanged, state))
+    void plugins.init()
   })
 
   app.on('before-quit', () => {

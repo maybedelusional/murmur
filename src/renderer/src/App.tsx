@@ -3,6 +3,7 @@ import type { AccessMode, NewAgentInput } from '@shared/types'
 import { AgentPanel } from './components/AgentPanel'
 import { AgentRail } from './components/AgentRail'
 import { NewAgentDialog } from './components/NewAgentDialog'
+import { PluginsSheet } from './components/PluginsSheet'
 import { SettingsDialog } from './components/SettingsDialog'
 import { Sky } from './components/Sky'
 import { TitleBar } from './components/TitleBar'
@@ -12,7 +13,8 @@ export function App() {
   const { state, api, run, showError, chooseProject, updateSettings } = useMurmur()
   const { project, agents, approvals, settings, nowPlaying, update, error } = state
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [dialog, setDialog] = useState<'new' | 'settings' | null>(null)
+  const [dialog, setDialog] = useState<'new' | 'settings' | 'plugins' | null>(null)
+  const [info, setInfo] = useState<string | null>(null)
 
   // Keep a sensible selection as agents come and go.
   useEffect(() => {
@@ -54,6 +56,7 @@ export function App() {
         onChooseProject={() => void chooseProject()}
         onPauseAll={() => void run(api.agents.pauseAll())}
         onOpenSettings={() => setDialog('settings')}
+        onOpenPlugins={() => setDialog(dialog === 'plugins' ? null : 'plugins')}
       />
 
       {project ? (
@@ -66,6 +69,7 @@ export function App() {
             onSelect={setSelectedId}
             onAnswer={(id, allow) => void run(api.agents.answer(id, allow))}
             onNew={openNew}
+            subscribeMessages={api.agents.onMessage}
           />
           {selected ? (
             <AgentPanel
@@ -105,6 +109,7 @@ export function App() {
           onClose={() => setDialog(null)}
         />
       ) : null}
+      {dialog === 'plugins' ? <PluginsSheet api={api} run={run} notify={setInfo} onClose={() => setDialog(null)} /> : null}
       {dialog === 'settings' && settings ? (
         <SettingsDialog settings={settings} onSave={(patch) => void updateSettings(patch)} onClose={() => setDialog(null)} />
       ) : null}
@@ -114,6 +119,16 @@ export function App() {
           <div className="toast error" role="alert">
             <p>{error}</p>
             <button className="icon-btn" aria-label="Dismiss" onClick={() => showError(null)}>
+              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                <path d="M0 0l10 10M10 0L0 10" stroke="currentColor" />
+              </svg>
+            </button>
+          </div>
+        ) : null}
+        {info ? (
+          <div className="toast" role="status">
+            <p>{info}</p>
+            <button className="icon-btn" aria-label="Dismiss" onClick={() => setInfo(null)}>
               <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
                 <path d="M0 0l10 10M10 0L0 10" stroke="currentColor" />
               </svg>

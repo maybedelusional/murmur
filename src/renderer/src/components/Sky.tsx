@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentSnapshot, ApprovalRequest } from '@shared/types'
-import { Flock, homeSlots } from '../flock'
+import type { AgentMessageEvent, AgentSnapshot, ApprovalRequest } from '@shared/types'
+import { Flock, Messenger, homeSlots } from '../flock'
 
 interface Props {
   agents: AgentSnapshot[]
@@ -9,15 +9,26 @@ interface Props {
   onSelect(id: string): void
   onAnswer(approvalId: string, allow: boolean): void
   onNew(): void
+  subscribeMessages(cb: (m: AgentMessageEvent) => void): () => void
 }
 
 const BIRDS: Record<string, number> = { planner: 26, builder: 42, reviewer: 22, tester: 32, custom: 32 }
 
-export function Sky({ agents, approvals, selectedId, onSelect, onAnswer, onNew }: Props) {
+export function Sky({ agents, approvals, selectedId, onSelect, onAnswer, onNew, subscribeMessages }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const flocks = useRef(new Map<string, Flock>())
   const labels = useRef(new Map<string, HTMLButtonElement>())
+  const messengers = useRef<Messenger[]>([])
+
+  // Agents messaging each other: a few birds fly from one flock to the other.
+  useEffect(
+    () =>
+      subscribeMessages((m) => {
+        if (messengers.current.length < 24) messengers.current.push(new Messenger(m.fromId, m.toId))
+      }),
+    [subscribeMessages]
+  )
   const [size, setSize] = useState({ w: 0, h: 0 })
 
   // Keep one flock per agent, placed in its own patch of sky.
@@ -77,6 +88,18 @@ export function Sky({ agents, approvals, selectedId, onSelect, onAnswer, onNew }
           el.style.left = `${f.labelX}px`
           el.style.top = `${Math.min(f.labelY, size.h - 64)}px`
         }
+      }
+      if (messengers.current.length) {
+        for (const m of messengers.current) {
+          const a = flocks.current.get(m.fromId)
+          const b = flocks.current.get(m.toId)
+          if (!a || !b) {
+            m.done = true
+            continue
+          }
+          m.draw(ctx, { x: a.centerX, y: a.centerY }, { x: b.centerX, y: b.centerY }, now)
+        }
+        messengers.current = messengers.current.filter((m) => !m.done)
       }
       raf = requestAnimationFrame(frame)
     }

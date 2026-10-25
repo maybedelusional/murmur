@@ -66,9 +66,10 @@ interface Props {
   onChooseProject(): void
   onPauseAll(): void
   onOpenSettings(): void
+  onOpenPlugins(): void
 }
 
-export function TitleBar({ api, project, nowPlaying, anyRunning, onChooseProject, onPauseAll, onOpenSettings }: Props) {
+export function TitleBar({ api, project, nowPlaying, anyRunning, onChooseProject, onPauseAll, onOpenSettings, onOpenPlugins }: Props) {
   return (
     <header className="titlebar">
       <Wordmark />
@@ -93,6 +94,9 @@ export function TitleBar({ api, project, nowPlaying, anyRunning, onChooseProject
           Pause all agents
         </button>
       ) : null}
+      <button className="btn quiet" style={{ height: 30 }} onClick={onOpenPlugins}>
+        Plugins
+      </button>
       <button className="icon-btn" aria-label="Settings" onClick={onOpenSettings}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
           <path d="M4 7h10M18 7h2M4 17h4M12 17h8" />

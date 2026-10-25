@@ -1,0 +1,6 @@
+{
+  "name": "murmur-teamwork",
+  "version": "1.0.0",
+  "description": "Skills that help agents hand work to each other cleanly: handoff notes and review requests.",
+  "author": { "name": "maybedelusional" }
+}

@@ -1,7 +1,7 @@
 // A stand-in for the Electron bridge so the UI can be opened in a plain
 // browser while designing (`npm run dev`, then open the renderer URL).
 // Never used inside the real app.
-import type { AgentSnapshot, ApprovalRequest, MurmurApi, NowPlaying, Settings } from '@shared/types'
+import type { AgentMessageEvent, AgentSnapshot, ApprovalRequest, Marketplace, MurmurApi, NowPlaying, PluginsState, Settings } from '@shared/types'
 
 export function installMock(): void {
   const now = Date.now()
@@ -50,6 +50,48 @@ export function installMock(): void {
     { id: 'ap1', agentId: 'reviewer', title: 'Reviewer wants to run a command', detail: 'git diff main...murmur/builder-a-k3f9', toolName: 'Bash', at: now }
   ]
   let settings: Settings = { worktreeRoot: 'C:\\cw', allowBypass: false, hideAutoCaution: false, theme: 'dusk' }
+  const none: import('@shared/types').PluginContents = { skills: [], commands: [], agents: [], hooks: false, mcpServers: [] }
+  const market = (key: string, repo: string, name: string, official: boolean, list: Array<[string, string, Partial<typeof none> | null, string?]>, path?: string): Marketplace => ({
+    key,
+    repo,
+    path,
+    name,
+    official,
+    builtin: true,
+    loading: false,
+    refreshedAt: now - 3600000,
+    plugins: list.map(([n, d, c, from]) => ({
+      key: `${key}/${n}`,
+      name: n,
+      marketplaceKey: key,
+      description: d,
+      from: from ?? `github.com/${repo}`,
+      supported: true,
+      contents: c ? { ...none, ...c } : undefined
+    }))
+  })
+  let plugins: PluginsState = {
+    busy: [],
+    installed: [],
+    mySkills: [{ name: 'write-release-notes', description: 'Use when writing release notes for a new version.', body: '# Release notes\n\n1. Read the commits since the last tag.\n2. Group them into Added, Changed and Fixed.' }],
+    marketplaces: [
+      market('anthropics/claude-plugins-official', 'anthropics/claude-plugins-official', 'claude-plugins-official', true, [
+        ['commit-commands', 'Commands for git commit workflows including commit, push, and PR creation', { commands: ['clean_gone', 'commit-push-pr', 'commit'] }],
+        ['code-review', 'Automated code review for pull requests using several specialised agents', { commands: ['code-review'], agents: ['reviewer'] }],
+        ['feature-dev', 'A structured feature development workflow with agents for exploring, designing and reviewing', { commands: ['feature-dev'], agents: ['code-explorer', 'code-architect', 'code-reviewer'] }],
+        ['security-guidance', 'Warns about risky patterns when editing files', { hooks: true }],
+        ['api-security-testing', 'Audit and scan OpenAPI definitions', null, 'github.com/42Crunch-AI/claude-plugins (plugins/api-security-testing)']
+      ]),
+      market('anthropics/skills', 'anthropics/skills', 'anthropic-agent-skills', true, [
+        ['document-skills', 'Collection of document processing suite including Excel, Word, PowerPoint, and PDF capabilities', { skills: ['xlsx', 'docx', 'pptx', 'pdf'] }],
+        ['claude-api', 'Claude API and SDK documentation skill for building LLM-powered applications', { skills: ['claude-api'] }]
+      ]),
+      market('maybedelusional/murmur/marketplace', 'maybedelusional/murmur', 'murmur-community', false, [
+        ['murmur-teamwork', 'Skills that help agents hand work to each other cleanly: handoff notes and review requests.', { skills: ['handoff', 'review-request'] }]
+      ], 'marketplace')
+    ]
+  }
+  const pluginListeners = new Set<(s: PluginsState) => void>()
   const listeners = new Set<(a: AgentSnapshot[], p: ApprovalRequest[]) => void>()
   const push = (): void => listeners.forEach((l) => l(agents, approvals))
   const ok = <T,>(value: T) => Promise.resolve({ ok: true as const, value })
@@ -116,6 +158,54 @@ export function installMock(): void {
         listeners.add(cb)
         setTimeout(() => cb(agents, approvals), 0)
         return () => listeners.delete(cb)
+      },
+      onMessage: (cb: (m: AgentMessageEvent) => void) => {
+        const pairs = [['builder-a', 'reviewer'], ['planner', 'builder-b'], ['tester', 'builder-a']]
+        let i = 0
+        const t = setInterval(() => {
+          const [fromId, toId] = pairs[i++ % pairs.length]
+          cb({ fromId, toId, text: 'Branch is ready for review.', at: Date.now() })
+        }, 3500)
+        return () => clearInterval(t)
+      }
+    },
+    plugins: {
+      state: () => Promise.resolve(plugins),
+      refresh: () => ok(undefined),
+      install: (key) => {
+        const p = plugins.marketplaces.flatMap((m) => m.plugins).find((x) => x.key === key)!
+        plugins = {
+          ...plugins,
+          installed: [
+            ...plugins.installed,
+            { key, name: p.name, marketplaceKey: p.marketplaceKey, marketplaceName: 'claude-plugins-official', enabled: true, installedAt: Date.now(), contents: p.contents ?? { skills: [], commands: [], agents: [], hooks: false, mcpServers: [] } }
+          ]
+        }
+        pluginListeners.forEach((l) => l(plugins))
+        return ok({ enabled: true, runsCode: false })
+      },
+      update: () => ok(undefined),
+      uninstall: (key) => {
+        plugins = { ...plugins, installed: plugins.installed.filter((p) => p.key !== key) }
+        pluginListeners.forEach((l) => l(plugins))
+        return ok(undefined)
+      },
+      setEnabled: (key, enabled) => {
+        plugins = { ...plugins, installed: plugins.installed.map((p) => (p.key === key ? { ...p, enabled } : p)) }
+        pluginListeners.forEach((l) => l(plugins))
+        return ok(undefined)
+      },
+      addMarketplace: () => ok(undefined),
+      removeMarketplace: () => ok(undefined),
+      saveSkill: (skill) => {
+        plugins = { ...plugins, mySkills: [...plugins.mySkills.filter((s) => s.name !== skill.name), skill] }
+        pluginListeners.forEach((l) => l(plugins))
+        return ok(undefined)
+      },
+      deleteSkill: () => ok(undefined),
+      onChange: (cb) => {
+        pluginListeners.add(cb)
+        return () => pluginListeners.delete(cb)
       }
     },
     settings: {

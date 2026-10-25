@@ -1,0 +1,17 @@
+{
+  "name": "murmur-community",
+  "description": "Plugins and skills made for working with several agents at once. Open a pull request to add yours.",
+  "owner": {
+    "name": "maybedelusional"
+  },
+  "plugins": [
+    {
+      "name": "murmur-teamwork",
+      "source": "./plugins/murmur-teamwork",
+      "description": "Skills that help agents hand work to each other cleanly: handoff notes and review requests.",
+      "version": "1.0.0",
+      "category": "productivity",
+      "author": { "name": "maybedelusional" }
+    }
+  ]
+}

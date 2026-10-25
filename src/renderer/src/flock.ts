@@ -29,7 +29,7 @@ interface Behaviour {
 
 const BEHAVIOUR: Record<AgentStatus, Behaviour> = {
   starting: { speed: 70, pull: 1.6, orbit: 0, wander: 30, spread: 9 },
-  working: { speed: 115, pull: 1.4, orbit: 0, wander: 72, spread: 9 },
+  working: { speed: 115, pull: 1.4, orbit: 0, wander: 52, spread: 9 },
   waiting: { speed: 70, pull: 2.2, orbit: 1, wander: 0, spread: 8 },
   idle: { speed: 22, pull: 0.9, orbit: 0, wander: 6, spread: 10 },
   paused: { speed: 8, pull: 0.6, orbit: 0, wander: 0, spread: 10 },
@@ -173,6 +173,8 @@ export class Flock {
   /** Smoothed centre and lower edge of the flock, so its label can follow it. */
   labelX = 0
   labelY = 0
+  centerX = 0
+  centerY = 0
 
   trackLabel(dt: number): void {
     if (!this.birds.length) return
@@ -187,6 +189,8 @@ export class Flock {
     const bottom = ys[Math.floor(ys.length * 0.9)]
     const tx = sx / this.birds.length
     const ty = bottom + 14
+    this.centerX = tx
+    this.centerY = ys[Math.floor(ys.length / 2)]
     if (!this.labelX && !this.labelY) {
       this.labelX = tx
       this.labelY = ty
@@ -197,23 +201,73 @@ export class Flock {
   }
 
   draw(ctx: CanvasRenderingContext2D): void {
+    for (const b of this.birds) drawBird(ctx, b.x, b.y, b.vx, b.vy, b.phase, b.size)
+  }
+}
+
+/** One small ink bird, pointing the way it flies, wings beating when it's fast. */
+export function drawBird(ctx: CanvasRenderingContext2D, x: number, y: number, vx: number, vy: number, phase: number, size: number): void {
+  const sp = Math.hypot(vx, vy)
+  const angle = sp > 2 ? Math.atan2(vy, vx) : 0
+  const w = 3.3 * size
+  const flap = sp > 25 ? 0.55 + 0.45 * Math.abs(Math.sin(phase)) : 0.8
+  const h = 1.5 * size * flap
+  ctx.save()
+  ctx.translate(x, y)
+  ctx.rotate(angle)
+  ctx.beginPath()
+  ctx.moveTo(-w * 0.2, -w)
+  ctx.quadraticCurveTo(w * 0.15, -h, w * 0.5, 0)
+  ctx.quadraticCurveTo(w * 0.15, h, -w * 0.2, w)
+  ctx.quadraticCurveTo(w * 0.05, 0, -w * 0.2, -w)
+  ctx.fill()
+  ctx.restore()
+}
+
+const MESSAGE_MS = 1900
+
+/**
+ * A message between agents: a few birds peel off the sender's flock and fly
+ * an arc over to the recipient.
+ */
+export class Messenger {
+  done = false
+  private start = performance.now()
+  private birds = Array.from({ length: 5 }, (_, i) => ({
+    ox: (Math.random() - 0.5) * 18,
+    oy: (Math.random() - 0.5) * 10,
+    lag: i * 0.035,
+    phase: Math.random() * 6,
+    size: 0.8 + Math.random() * 0.4
+  }))
+
+  constructor(
+    readonly fromId: string,
+    readonly toId: string
+  ) {}
+
+  draw(ctx: CanvasRenderingContext2D, from: { x: number; y: number }, to: { x: number; y: number }, now: number): void {
+    const raw = (now - this.start) / MESSAGE_MS
+    if (raw >= 1 + 0.15) {
+      this.done = true
+      return
+    }
+    const dist = Math.hypot(to.x - from.x, to.y - from.y)
+    const cx = (from.x + to.x) / 2
+    const cy = Math.min(from.y, to.y) - 60 - dist * 0.18
     for (const b of this.birds) {
-      const sp = Math.hypot(b.vx, b.vy)
-      const angle = sp > 2 ? Math.atan2(b.vy, b.vx) : 0
-      const w = 3.3 * b.size
-      // wings beat when flying, glide when slow
-      const flap = sp > 25 ? 0.55 + 0.45 * Math.abs(Math.sin(b.phase)) : 0.8
-      const h = 1.5 * b.size * flap
-      ctx.save()
-      ctx.translate(b.x, b.y)
-      ctx.rotate(angle)
-      ctx.beginPath()
-      ctx.moveTo(-w * 0.2, -w)
-      ctx.quadraticCurveTo(w * 0.15, -h, w * 0.5, 0)
-      ctx.quadraticCurveTo(w * 0.15, h, -w * 0.2, w)
-      ctx.quadraticCurveTo(w * 0.05, 0, -w * 0.2, -w)
-      ctx.fill()
-      ctx.restore()
+      const t = Math.min(1, Math.max(0, raw - b.lag))
+      if (t <= 0 || t >= 1) continue
+      const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+      const u = 1 - e
+      const x = u * u * from.x + 2 * u * e * cx + e * e * to.x
+      const y = u * u * from.y + 2 * u * e * cy + e * e * to.y
+      // direction of travel = derivative of the curve
+      const dx = 2 * u * (cx - from.x) + 2 * e * (to.x - cx)
+      const dy = 2 * u * (cy - from.y) + 2 * e * (to.y - cy)
+      const spread = Math.sin(Math.PI * e)
+      b.phase += 0.35
+      drawBird(ctx, x + b.ox * spread, y + b.oy * spread, dx, dy, b.phase, b.size)
     }
   }
 }
